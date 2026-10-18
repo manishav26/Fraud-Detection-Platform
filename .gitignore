@@ -1,5 +1,29 @@
+# Data (Kaggle rules + GitHub size limits)
 data/*
 !data/README.md
-.venv/
+*.csv
+*.parquet
+
+# Python
 __pycache__/
+*.pyc
+
+# Jupyter
 .ipynb_checkpoints/
+
+# Models and experiment tracking (generated, can be large)
+mlruns/
+models/
+*.pkl
+*.joblib
+
+# Logs
+*.log
+
+# Secrets
+.env
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store

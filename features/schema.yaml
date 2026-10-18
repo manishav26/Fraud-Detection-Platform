@@ -1,0 +1,56 @@
+# Feature schema: the contract between ML (Manisha) and platform (Urmi).
+# Changes need both approvals.
+version: 0.1.0
+dataset: IEEE-CIS Fraud Detection
+entity_key: user_id        # proxy user id v1: card1 | addr1 | card start day
+time_field: ts             # every history feature uses only events strictly before ts
+
+# 1. Top-level request fields (POST /v1/transactions/score)
+request_fields:
+  - {name: txn_id,    type: string,   required: true,  source: TransactionID}
+  - {name: user_id,   type: string,   required: true,  source: "proxy id v1"}
+  - {name: amount,    type: float,    required: true,  source: TransactionAmt}
+  - {name: ts,        type: datetime, required: true,  source: TransactionDT}
+  - {name: channel,   type: string,   required: false, source: DeviceType}
+
+# 2. attrs: raw IEEE-CIS columns sent inside the request's attrs map (51 keys, max 64)
+attrs:
+  card:        [card1, card2, card3, card4, card5, card6]
+  address:     [addr1, addr2, dist1]
+  product:     [ProductCD]
+  email:       [P_emaildomain, R_emaildomain]
+  device:      [DeviceType]
+  counts:      [C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13, C14]
+  timedeltas:  [D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15]
+  match_flags: [M1, M2, M3, M4, M5, M6, M7, M8, M9]
+  missing_values: allowed   # any attr may be null; LightGBM handles missing values
+
+# 3. Request-time features: computed in scoring-svc from the request alone
+request_time_features:
+  - {name: log_amount, type: float, formula: "log(1 + amount)"}
+  - {name: hour,       type: int,   formula: "hour of day from ts"}
+
+# 4. Per-user history features: computed by the stream job, stored in Cassandra
+user_history_features:
+  - {name: n_prev_txns,     type: int,   agg: count, window: all}
+  - {name: txn_count_1h,    type: int,   agg: count, window: 1h}
+  - {name: txn_count_24h,   type: int,   agg: count, window: 24h}
+  - {name: txn_count_30d,   type: int,   agg: count, window: 30d}
+  - {name: amt_sum_24h,     type: float, agg: sum,   window: 24h, of: amount}
+  - {name: amt_mean_30d,    type: float, agg: mean,  window: 30d, of: amount}
+  - {name: amt_std_30d,     type: float, agg: std,   window: 30d, of: amount}
+  - {name: amount_zscore,   type: float, formula: "(amount - amt_mean_30d) / amt_std_30d"}
+  - {name: secs_since_last, type: float, formula: "ts - last_ts"}
+
+# 5. Novelty flags: is this value new for this user?
+novelty_features:
+  - {name: new_P_emaildomain, type: bool, of: P_emaildomain}
+  - {name: new_DeviceType,    type: bool, of: DeviceType}
+  - {name: new_ProductCD,     type: bool, of: ProductCD}
+
+# 6. Unknown or new users (no history, or proxy id contains a missing part)
+cold_start:
+  history_features: null
+  response_flag: cold_start=true
+
+# Total model features: 51 attrs + 2 request-time + 9 history + 3 novelty = 65
