@@ -1,0 +1,36 @@
+# DRAFT contract. Both owners approve at Gate 1; FastAPI /openapi.json is the source of truth.
+openapi: 3.0.3
+info: {title: Fraud Platform Scoring API, version: 0.1.0}
+paths:
+  /v1/transactions/score:
+    post:
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [txn_id, user_id, amount, timestamp]
+              properties:
+                txn_id: {type: string}
+                user_id: {type: string}
+                amount: {type: number, exclusiveMinimum: 0}
+                timestamp: {type: integer}
+                attrs: {type: object, description: "keys listed in features/schema.yaml"}
+      responses:
+        "200":
+          description: decision
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  txn_id: {type: string}
+                  score: {type: number}
+                  decision: {type: string, enum: [allow, review, block]}
+                  model_version: {type: string}
+        "401": {description: missing or invalid token}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}

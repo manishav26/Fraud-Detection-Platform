@@ -1,0 +1,22 @@
+_format_version: "3.0"
+consumers:
+  - username: dev-client
+    jwt_secrets:
+      - key: fraud-platform-issuer
+        algorithm: RS256
+        rsa_public_key: |
+@@PUBLIC_KEY@@
+services:
+  - name: ingest
+    url: http://ingest-svc:8000
+    routes:
+      - name: score
+        paths: ["/v1/transactions"]
+        plugins:
+          - name: jwt
+            config: { claims_to_verify: [exp] }
+  - name: token
+    url: http://token-issuer:8000
+    routes:
+      - name: token
+        paths: ["/token"]
