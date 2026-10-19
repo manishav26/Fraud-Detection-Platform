@@ -4,7 +4,7 @@ Run on 2026-10-19 after `make up`.
 | Request | Result |
 |---|---|
 | POST /token | 200, RS256 token with scope score:write |
-| POST /v1/transactions/score with valid token | 200, `{"txn_id":"t1","score":0.12,"decision":"allow","model_version":"stub-0"}` |
+| POST /v1/transactions/score with valid token | 200, `{"txn_id":"t1","score":0.12,"decision":"approve","model_version":"stub-0","reasons":[]}` |
 | Same call with no token | 401 `{"message":"Unauthorized"}` |
 | Same call with a bad token | 401 `{"message":"Bad token; invalid JSON"}` |
 
