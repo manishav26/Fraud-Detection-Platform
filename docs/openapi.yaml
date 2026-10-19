@@ -84,8 +84,9 @@ paths:
                 properties:
                   txn_id: {type: string}
                   score: {type: number}
-                  decision: {type: string, enum: [allow, review, block]}
+                  decision: {type: string, enum: [approve, review, decline]}
                   model_version: {type: string}
+                  reasons: {type: array, items: {type: string}, description: "top 3 model reasons (week 3)"}
         "401": {description: missing or invalid token}
 components:
   securitySchemes:

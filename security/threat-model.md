@@ -32,10 +32,10 @@ defined in the plan; each needs a pass number saved in docs/results/security.md.
 | ST6 | Injection strings in every text field | No change in any data store, no error leak |
 | ST7 | One client sends 200 req/s against a limit of 50 | Excess gets 429, P95 for others moves under 10% |
 | ST8 | Edit one audit row by hand, run the verify tool | Tool names the first broken row |
-| ST9 | Swap the model file for another | See plan (checksum mismatch must block loading) |
+| ST9 | Swap the model file for another | Scoring refuses the swapped file and keeps serving the old model |
 | ST10 | CI scan of repo and images | No secrets, no unwaived HIGH or CRITICAL findings |
 | ST11 | Search all logs and stored rows for raw user ids | Zero hits |
 | ST12 | Same signed request twice, and one with a 10 min old timestamp | One stored row, old one rejected |
 | ST13 | Write to labels with a service account that is not label-sim | Write denied |
 | ST14 | Force 5 drift alarms in one day | At most the allowed retrains run, cooldown message logged |
-| E6 | Evasion study: probing the API | Defined in the plan |
+| E6 | Evasion study: probing the API | Clear drop in evasion success at Q = 50 after defenses, false positives up by no more than 0.1 point |

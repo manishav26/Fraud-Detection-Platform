@@ -23,11 +23,12 @@ class Decision(BaseModel):
     score: float
     decision: str
     model_version: str
+    reasons: list[str] = []  # top 3 model reasons, filled from week 3
 
 
-def decide(score: float, review: float = 0.30, block: float = 0.70) -> str:
+def decide(score: float, review: float = 0.30, decline: float = 0.70) -> str:
     # Thresholds mirror config/decision.yaml; loaded from it in week 2.
-    return "block" if score >= block else "review" if score >= review else "allow"
+    return "decline" if score >= decline else "review" if score >= review else "approve"
 
 
 @app.post("/v1/transactions/score", response_model=Decision)
@@ -36,4 +37,5 @@ async def score_txn(txn: Transaction):
         r = await c.post(f"{SCORING_URL}/score", json=txn.model_dump(mode="json"))
     body = r.json()
     return Decision(txn_id=txn.txn_id, score=body["score"],
-                    decision=decide(body["score"]), model_version=body["model_version"])
+                    decision=decide(body["score"]), model_version=body["model_version"],
+                    reasons=body.get("reasons", []))
