@@ -22,13 +22,11 @@ services:
       POSTGRES_PASSWORD: fraud_dev_only
       POSTGRES_DB: fraud
     ports: ["5432:5432"]
-  minio:  # profile 'storage': image not pullable from Docker Hub or Quay yet; needed from week 3 (MLflow)
-    profiles: [storage]
-    image: quay.io/minio/minio:RELEASE.2024-10-13T13-34-11Z
-    command: server /data --console-address ":9001"
+  objectstore:  # S3-compatible store (RustFS); MinIO no longer ships free images or binaries
+    image: rustfs/rustfs:latest
     environment:
-      MINIO_ROOT_USER: minio_dev
-      MINIO_ROOT_PASSWORD: minio_dev_only
+      RUSTFS_ACCESS_KEY: minio_dev
+      RUSTFS_SECRET_KEY: minio_dev_only
     ports: ["9000:9000", "9001:9001"]
   token-issuer:
     build: ./services/token-issuer

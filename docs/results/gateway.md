@@ -10,5 +10,7 @@ Run on 2026-10-19 after `make up`.
 
 Connectivity: `rpk cluster info`, `psql` (select 1) and `cqlsh` (describe cluster) all connect.
 
-Known gap: MinIO is under the `storage` compose profile because its image could not be pulled from
-Docker Hub or Quay. It is not needed until MLflow artifacts in week 3.
+k3d: `make cluster` gives one node, `kubectl --context k3d-fraud get nodes` shows `k3d-fraud-server-0 Ready control-plane`.
+
+Object store: MinIO no longer ships free images or binaries (Docker Hub and Quay refuse, the Homebrew download returns 410),
+so `compose.yaml` runs RustFS, which is S3-compatible. Check: created a bucket, wrote and read an object over the S3 API.
