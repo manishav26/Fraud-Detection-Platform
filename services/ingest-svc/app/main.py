@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 import httpx
 from fastapi import FastAPI
@@ -12,8 +13,9 @@ class Transaction(BaseModel):
     txn_id: str
     user_id: str
     amount: float = Field(gt=0)
-    timestamp: int
-    attrs: dict[str, float | str | None] = {}
+    ts: datetime
+    channel: str | None = None
+    attrs: dict[str, float | str | None] = Field(default={}, max_length=64)
 
 
 class Decision(BaseModel):
@@ -31,7 +33,7 @@ def decide(score: float, review: float = 0.30, block: float = 0.70) -> str:
 @app.post("/v1/transactions/score", response_model=Decision)
 async def score_txn(txn: Transaction):
     async with httpx.AsyncClient() as c:
-        r = await c.post(f"{SCORING_URL}/score", json=txn.model_dump())
+        r = await c.post(f"{SCORING_URL}/score", json=txn.model_dump(mode="json"))
     body = r.json()
     return Decision(txn_id=txn.txn_id, score=body["score"],
                     decision=decide(body["score"]), model_version=body["model_version"])

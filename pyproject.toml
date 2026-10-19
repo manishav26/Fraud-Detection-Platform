@@ -1,5 +1,6 @@
 [tool.ruff]
 line-length = 100
+extend-exclude = ["notebooks"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "security/tests"]

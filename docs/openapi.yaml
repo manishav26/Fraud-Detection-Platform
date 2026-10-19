@@ -11,13 +11,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [txn_id, user_id, amount, timestamp]
+              required: [txn_id, user_id, amount, ts]
               properties:
                 txn_id: {type: string}
                 user_id: {type: string}
                 amount: {type: number, exclusiveMinimum: 0}
-                timestamp: {type: integer}
-                attrs: {type: object, description: "keys listed in features/schema.yaml"}
+                ts: {type: string, format: date-time}
+                channel: {type: string, nullable: true}
+                attrs: {type: object, maxProperties: 64, description: "51 keys under attrs in features/schema.yaml"}
       responses:
         "200":
           description: decision

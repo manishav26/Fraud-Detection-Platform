@@ -8,6 +8,8 @@ class ScoreRequest(BaseModel):
     txn_id: str
     user_id: str
     amount: float
+    ts: str
+    channel: str | None = None
     attrs: dict[str, float | str | None] = {}
 
 
