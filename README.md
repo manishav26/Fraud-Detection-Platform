@@ -23,3 +23,16 @@ IEEE-CIS Fraud Detection (Kaggle), about 590K real card transactions over six mo
 |---|---|
 | **Urmi Shah** | Platform and security: services, streaming, storage, Kubernetes, security controls |
 | **Manisha Varthamanan** | Machine learning and drift: data, features, models, drift detection, experiments |
+
+## Run locally
+`make up` starts the stack (needs Docker). Get a token and score a transaction:
+```
+TOKEN=$(curl -s -X POST localhost:8000/token | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
+curl -s -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"txn_id":"t1","user_id":"u1","amount":10,"ts":"2026-10-19T10:00:00Z"}' localhost:8000/v1/transactions/score
+```
+Without a token the gateway returns 401. `make test` and `make lint` run the checks.
+
+## Object store and Kubernetes
+- `make up` also starts an S3-compatible object store (RustFS) on port 9000, console on http://localhost:9001, login `minio_dev` / `minio_dev_only`. MLflow uses it from week 3. MinIO was dropped because it no longer publishes free images or binaries.
+- `make cluster` creates a local k3d Kubernetes cluster named `fraud`; `make cluster-down` removes it. Used from week 4.

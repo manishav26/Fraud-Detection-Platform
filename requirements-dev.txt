@@ -1,0 +1,6 @@
+pytest
+httpx
+ruff
+fastapi
+pydantic
+pyjwt[crypto]

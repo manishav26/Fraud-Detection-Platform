@@ -27,3 +27,9 @@ models/
 .vscode/
 .idea/
 .DS_Store
+# Platform (Urmi)
+keys/
+deploy/kong/kong.yml
+.pytest_cache/
+.ruff_cache/
+.venv/

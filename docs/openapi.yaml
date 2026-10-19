@@ -1,0 +1,92 @@
+# DRAFT contract. Both owners approve at Gate 1; FastAPI /openapi.json is the source of truth.
+openapi: 3.0.3
+info: {title: Fraud Platform Scoring API, version: 0.1.0}
+paths:
+  /v1/transactions/score:
+    post:
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [txn_id, user_id, amount, ts]
+              properties:
+                txn_id: {type: string}
+                user_id: {type: string}
+                amount: {type: number, exclusiveMinimum: 0}
+                ts: {type: string, format: date-time}
+                channel: {type: string, nullable: true}
+                attrs:
+                  type: object
+                  maxProperties: 64
+                  description: 51 raw IEEE-CIS columns from features/schema.yaml; any value may be null
+                  properties:
+                    card1: {type: number, nullable: true}
+                    card2: {type: number, nullable: true}
+                    card3: {type: number, nullable: true}
+                    card4: {type: string, nullable: true}
+                    card5: {type: number, nullable: true}
+                    card6: {type: string, nullable: true}
+                    addr1: {type: number, nullable: true}
+                    addr2: {type: number, nullable: true}
+                    dist1: {type: number, nullable: true}
+                    ProductCD: {type: string, nullable: true}
+                    P_emaildomain: {type: string, nullable: true}
+                    R_emaildomain: {type: string, nullable: true}
+                    DeviceType: {type: string, nullable: true}
+                    C1: {type: number, nullable: true}
+                    C2: {type: number, nullable: true}
+                    C3: {type: number, nullable: true}
+                    C4: {type: number, nullable: true}
+                    C5: {type: number, nullable: true}
+                    C6: {type: number, nullable: true}
+                    C7: {type: number, nullable: true}
+                    C8: {type: number, nullable: true}
+                    C9: {type: number, nullable: true}
+                    C10: {type: number, nullable: true}
+                    C11: {type: number, nullable: true}
+                    C12: {type: number, nullable: true}
+                    C13: {type: number, nullable: true}
+                    C14: {type: number, nullable: true}
+                    D1: {type: number, nullable: true}
+                    D2: {type: number, nullable: true}
+                    D3: {type: number, nullable: true}
+                    D4: {type: number, nullable: true}
+                    D5: {type: number, nullable: true}
+                    D6: {type: number, nullable: true}
+                    D7: {type: number, nullable: true}
+                    D8: {type: number, nullable: true}
+                    D9: {type: number, nullable: true}
+                    D10: {type: number, nullable: true}
+                    D11: {type: number, nullable: true}
+                    D12: {type: number, nullable: true}
+                    D13: {type: number, nullable: true}
+                    D14: {type: number, nullable: true}
+                    D15: {type: number, nullable: true}
+                    M1: {type: string, nullable: true}
+                    M2: {type: string, nullable: true}
+                    M3: {type: string, nullable: true}
+                    M4: {type: string, nullable: true}
+                    M5: {type: string, nullable: true}
+                    M6: {type: string, nullable: true}
+                    M7: {type: string, nullable: true}
+                    M8: {type: string, nullable: true}
+                    M9: {type: string, nullable: true}
+      responses:
+        "200":
+          description: decision
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  txn_id: {type: string}
+                  score: {type: number}
+                  decision: {type: string, enum: [allow, review, block]}
+                  model_version: {type: string}
+        "401": {description: missing or invalid token}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
