@@ -4,4 +4,4 @@ extend-exclude = ["notebooks"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "security/tests"]
-pythonpath = ["services/ingest-svc", "services/scoring-svc", "services/token-issuer"]
+pythonpath = [".", "services/ingest-svc", "services/scoring-svc", "services/token-issuer"]

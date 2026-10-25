@@ -8,11 +8,19 @@ Compares LightGBM on days 74-109 (trained on days 1-73) with:
 
 import numpy as np
 import pandas as pd
+from e2_history import (
+    BASE_FEATURES,
+    HISTORY_FEATURES,
+    RESULTS,
+    TARGET,
+    add_history,
+    add_proxy_id,
+    caught_at_fpr,
+    load_all,
+    recall_at_fpr,
+    train_and_score,
+)
 from sklearn.metrics import average_precision_score
-
-from e2_history import (BASE_FEATURES, HISTORY_FEATURES, RESULTS, TARGET, add_history,
-                        add_proxy_id, caught_at_fpr, load_all, recall_at_fpr,
-                        train_and_score)
 
 # D8 and D9 are not plain day counts (D9 looks like a fraction of a day), so they stay raw.
 D_TO_NORMALIZE = [f"D{i}" for i in range(1, 16) if i not in (8, 9)]

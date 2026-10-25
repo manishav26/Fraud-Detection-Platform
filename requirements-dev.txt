@@ -4,3 +4,5 @@ ruff
 fastapi
 pydantic
 pyjwt[crypto]
+numpy
+pandas
