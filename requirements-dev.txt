@@ -6,3 +6,5 @@ pydantic
 pyjwt[crypto]
 numpy
 pandas
+lightgbm
+scikit-learn

@@ -4,7 +4,7 @@ Machine learning and drift detection for the fraud platform (owner: Manisha).
 
 ## Setup
 
-Needs Python 3.10+ (we use a conda env with Python 3.11). Download the data first
+Needs Python 3.11+ (we use a conda env with Python 3.11). Download the data first
 (see [data/README.md](../data/README.md)).
 
 ## Run

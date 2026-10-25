@@ -14,7 +14,7 @@ Usage in the scoring service:
 import hashlib
 import json
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import lightgbm as lgb
@@ -32,11 +32,10 @@ def _sha256(path):
 def _hour_from_ts(ts):
     """Hour of day (UTC) from an ISO timestamp string or datetime."""
     if isinstance(ts, str):
-        ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        ts = datetime.fromisoformat(ts)      # Python 3.11+ understands the trailing "Z"
     if ts.tzinfo is not None:
-        ts = ts.astimezone(timezone.utc)
+        ts = ts.astimezone(UTC)
     return ts.hour
-
 
 class FraudModel:
     def __init__(self, booster, meta):
