@@ -17,6 +17,9 @@ The model sits inside a scalable, secure platform (microservices, streaming, Kub
 **Data:** 
 IEEE-CIS Fraud Detection (Kaggle), about 590K real card transactions over six months.
 
+## ML pipeline
+How to run the data prep, experiments and model training: see [ml/README.md](ml/README.md).
+
 ## Team
 
 | | Focus |
