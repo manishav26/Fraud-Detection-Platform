@@ -1,3 +1,4 @@
-# Starting thresholds (Week 1). Manisha proposes final values in week 2.
-review_threshold: 0.30
+# Thresholds on calibrated fraud probability (week 2, see docs/results/calibration.md).
+# Review threshold chosen with analyst capacity <= 2% of payments.
+review_threshold: 0.39
 decline_threshold: 0.70
