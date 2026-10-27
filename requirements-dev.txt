@@ -4,3 +4,7 @@ ruff
 fastapi
 pydantic
 pyjwt[crypto]
+numpy
+pandas
+lightgbm
+scikit-learn
