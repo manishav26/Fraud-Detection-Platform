@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics cluster cluster-down
+.PHONY: keys up down test lint logs topics schema cassandra-speed cluster cluster-down
 keys:
 	./scripts/gen_keys.sh
 
@@ -14,6 +14,14 @@ logs:
 # Redpanda topics (needs `make up` first). List and reasons: docs/topics.md
 topics:
 	./scripts/create_topics.sh
+
+# Cassandra keyspace and table (needs `make up` first). Design: docs/cassandra.md
+schema:
+	./scripts/create_schema.sh
+
+# 10,000 writes plus read timings against the local Cassandra (needs `make schema` first)
+cassandra-speed:
+	python -m store.speed_test
 
 lint:
 	ruff check .

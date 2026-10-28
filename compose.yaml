@@ -14,7 +14,7 @@ services:
       MAX_HEAP_SIZE: 1G
       HEAP_NEWSIZE: 256M
     ports: ["9042:9042"]
-    volumes: ["./deploy/cassandra:/docker-entrypoint-initdb.d:ro"]
+    volumes: ["./deploy/cassandra:/schema:ro"]  # loaded by `make schema`
   postgres:
     image: postgres:16
     environment:
