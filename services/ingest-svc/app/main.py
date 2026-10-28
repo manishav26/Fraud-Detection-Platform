@@ -3,7 +3,7 @@
 Flow per request (design: docs/ingest.md):
   1. FastAPI checks the body against the contract. Bad body -> copy to dlq.txn, return 422.
   2. Save the payment to txn.raw (acks=all, idempotent, key user_id). Fails -> 503, client retries.
-  3. Ask scoring-svc for the score and return the decision right away (contract: 200 + decision).
+  3. Ask scoring-svc for score and decision and return it right away (contract: 200 + decision).
 """
 
 import asyncio
@@ -93,11 +93,7 @@ class Decision(BaseModel):
     decision: str
     model_version: str
     reasons: list[str] = []  # top 3 model reasons, filled from week 3
-
-
-def decide(score: float, review: float = 0.30, decline: float = 0.70) -> str:
-    # Moves to scoring-svc (model.decide with config/decision.yaml) in week 2, step 5.
-    return "decline" if score >= decline else "review" if score >= review else "approve"
+    cold_start: bool = False  # true: no trusted history for this user (unknown or new)
 
 
 def now():
@@ -133,7 +129,6 @@ async def score_txn(txn: Transaction, request: Request):
         log.exception("could not save %s to %s", txn.txn_id, RAW_TOPIC)
         raise HTTPException(503, "could not record the transaction; retry with the same txn_id")
 
+    # scoring-svc decides (model.decide, thresholds saved with the model): one source of truth
     body = await call_scoring(record)
-    return Decision(txn_id=txn.txn_id, score=body["score"],
-                    decision=decide(body["score"]), model_version=body["model_version"],
-                    reasons=body.get("reasons", []))
+    return Decision(**body)

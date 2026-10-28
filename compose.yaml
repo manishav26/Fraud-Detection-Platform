@@ -33,7 +33,11 @@ services:
     volumes: ["./keys:/keys:ro"]
     environment: { PRIVATE_KEY_PATH: /keys/private.pem }
   scoring-svc:
-    build: ./services/scoring-svc
+    build: { context: ., dockerfile: services/scoring-svc/Dockerfile }
+    env_file: deploy/scoring.env
+    volumes: ["./models:/models:ro"]   # read-only: the service can't change its own model
+    depends_on: [cassandra]
+    restart: on-failure   # e.g. Cassandra still starting: exit, Docker starts us again
   ingest-svc:
     build: ./services/ingest-svc
     environment: { SCORING_URL: "http://scoring-svc:8000", KAFKA_BOOTSTRAP: "redpanda:29092" }

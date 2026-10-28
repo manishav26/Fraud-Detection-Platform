@@ -27,7 +27,8 @@ class FakeProducer:
 @pytest.fixture
 def client(monkeypatch):
     async def fake_scoring(record):
-        return {"score": 0.12, "model_version": "stub-0"}
+        return {"txn_id": record["txn_id"], "score": 0.12, "decision": "approve",
+                "model_version": "stub-0", "reasons": [], "cold_start": True}
 
     monkeypatch.setattr(main, "call_scoring", fake_scoring)
     main.app.state.producer = FakeProducer()
@@ -37,7 +38,7 @@ def client(monkeypatch):
 def test_good_payment_is_saved_then_decided(client):
     r = client.post("/v1/transactions/score", json=GOOD)
     assert r.status_code == 200
-    assert r.json()["decision"] == "approve"
+    assert r.json()["decision"] == "approve" and r.json()["cold_start"] is True
     [(topic, key, value)] = main.app.state.producer.sent
     assert topic == "txn.raw" and key == b"u1"
     assert value["txn_id"] == "t1" and value["attrs"]["card1"] == 1234
