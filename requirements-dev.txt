@@ -9,3 +9,4 @@ pandas
 lightgbm
 scikit-learn
 cassandra-driver
+aiokafka

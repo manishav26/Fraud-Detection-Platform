@@ -88,6 +88,8 @@ paths:
                   model_version: {type: string}
                   reasons: {type: array, items: {type: string}, description: "top 3 model reasons (week 3)"}
         "401": {description: missing or invalid token}
+        "422": {description: body does not match this contract; a copy is kept in dlq.txn}
+        "503": {description: could not record the transaction; retry with the same txn_id}
 components:
   securitySchemes:
     bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
