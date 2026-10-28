@@ -67,7 +67,11 @@ async def start_producer(attempts=30):
 @asynccontextmanager
 async def lifespan(app):
     app.state.producer = await start_producer()
+    # One client for the whole service: it keeps connections to scoring-svc open and reuses
+    # them. A new client per request cost a new connection (and setup) every time.
+    app.state.http = httpx.AsyncClient(base_url=SCORING_URL, timeout=5.0)
     yield
+    await app.state.http.aclose()
     await app.state.producer.stop()
 
 
@@ -101,8 +105,7 @@ def now():
 
 
 async def call_scoring(record):
-    async with httpx.AsyncClient() as c:
-        r = await c.post(f"{SCORING_URL}/score", json=record)
+    r = await app.state.http.post("/score", json=record)
     return r.json()
 
 

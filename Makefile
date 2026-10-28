@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics schema cassandra-speed cluster cluster-down
+.PHONY: keys up down test lint logs topics schema cassandra-speed replay load cluster cluster-down
 keys:
 	./scripts/gen_keys.sh
 
@@ -22,6 +22,18 @@ schema:
 # 10,000 writes plus read timings against the local Cassandra (needs `make schema` first)
 cassandra-speed:
 	python -m store.speed_test
+
+# Replay real payments through the gateway (needs data/processed/stream.parquet). Docs: docs/load.md
+SPEED ?= 1000
+LIMIT ?= 5000
+replay:
+	python -m load.replay --speed $(SPEED) --limit $(LIMIT)
+
+# Fake payments at a fixed rate, for load tests (no data needed)
+RPS ?= 50
+SECONDS ?= 30
+load:
+	python -m load.synthetic --rps $(RPS) --seconds $(SECONDS)
 
 lint:
 	ruff check .

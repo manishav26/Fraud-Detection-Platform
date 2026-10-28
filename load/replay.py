@@ -1,0 +1,107 @@
+"""Replay real IEEE-CIS payments through the gateway, in time order, sped up (week 2, step 4).
+
+    python -m load.replay --speed 1000 --limit 5000
+    make replay SPEED=1000 LIMIT=5000
+
+Reads data/processed/stream.parquet (days 110-182) by default and turns each row into an API
+request:
+  txn_id   TransactionID
+  user_id  proxy user id v1 (features/proxy_id.py, same as training)
+  amount   TransactionAmt
+  ts       START (midnight UTC) + TransactionDT seconds, so the model's hour-of-day feature
+           matches training: (TransactionDT // 3600) % 24
+  channel  DeviceType
+  attrs    the 51 raw columns listed in features/schema.yaml (missing -> null)
+
+--speed 1000 means 1000 seconds of data per real second (73 days in about 1.75 hours).
+--speed 0 sends as fast as --concurrency allows. Results per payment, with the true label, go to
+data/replay/results.csv (not committed).
+"""
+
+import argparse
+import asyncio
+import math
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pandas as pd
+import yaml
+
+from features.proxy_id import add_proxy_id
+from load.sender import run, write_csv
+
+ROOT = Path(__file__).resolve().parents[1]
+START = datetime(2017, 12, 1, tzinfo=UTC)   # any midnight UTC works; this is the usual guess
+
+
+def attr_columns():
+    """The 51 attrs, read from the shared feature contract so the two never drift apart."""
+    groups = yaml.safe_load((ROOT / "features" / "schema.yaml").read_text())["attrs"]
+    return [c for cols in groups.values() if isinstance(cols, list) for c in cols]
+
+
+def clean(v):
+    """numpy / pandas value -> plain JSON value; NaN -> None."""
+    if v is None or (isinstance(v, float) and math.isnan(v)) or v is pd.NA:
+        return None
+    return v.item() if hasattr(v, "item") else v
+
+
+def to_ts(transaction_dt, start=START):
+    return (start + timedelta(seconds=int(transaction_dt))).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def to_request(row, attrs):
+    return {"txn_id": str(row["TransactionID"]), "user_id": row["uid"],
+            "amount": float(row["TransactionAmt"]), "ts": to_ts(row["TransactionDT"]),
+            "channel": clean(row["DeviceType"]),
+            "attrs": {c: clean(row[c]) for c in attrs}}
+
+
+def schedule(df, speed, chunk=10_000):
+    """(seconds from start, request, true label) for every row, in time order.
+
+    Rows are turned into dicts 10,000 at a time, so 210k rows never sit in memory as dicts.
+    """
+    attrs = attr_columns()
+    first = df["TransactionDT"].iloc[0]
+    for i in range(0, len(df), chunk):
+        for row in df.iloc[i:i + chunk].to_dict("records"):
+            offset = (row["TransactionDT"] - first) / speed if speed else 0
+            yield offset, to_request(row, attrs), row.get("isFraud")
+
+
+def load_rows(path, limit=None):
+    """Only the columns we send (the parquet has 434), sorted by time, with the proxy user id."""
+    cols = ["TransactionID", "TransactionDT", "TransactionAmt", "isFraud", "D1",
+            *attr_columns()]
+    df = pd.read_parquet(path, columns=list(dict.fromkeys(cols)))
+    df = df.sort_values("TransactionDT", kind="stable")
+    if limit:
+        df = df.head(limit)
+    return add_proxy_id(df).reset_index(drop=True)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("--data", default=ROOT / "data" / "processed" / "stream.parquet")
+    p.add_argument("--speed", type=float, default=1000, help="data seconds per real second; 0 = max")
+    p.add_argument("--limit", type=int, help="only the first N payments")
+    p.add_argument("--concurrency", type=int, default=32)
+    p.add_argument("--url", default="http://localhost:8000")
+    p.add_argument("--out", default=ROOT / "data" / "replay" / "results.csv")
+    args = p.parse_args()
+
+    df = load_rows(args.data, args.limit)
+    days = (df["TransactionDT"].iloc[-1] - df["TransactionDT"].iloc[0]) / 86400
+    print(f"Replaying {len(df):,} payments ({days:.1f} days of data) at speed {args.speed:g}")
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    stats, wall = asyncio.run(run(schedule(df, args.speed), args.url, args.concurrency,
+                                  keep_rows=True))
+    write_csv(stats.rows, args.out)
+    print(stats.summary(wall))
+    print(f"Per-payment results: {args.out}")
+
+
+if __name__ == "__main__":
+    main()
