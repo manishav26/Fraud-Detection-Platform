@@ -4,9 +4,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-cqlsh() { docker compose exec -T cassandra cqlsh "$@"; }
+# How to run cqlsh: in the compose container by default; scripts/k8s_up.sh points it at the pod.
+CQLSH="${CQLSH:-docker compose exec -T cassandra cqlsh}"
+cqlsh() { $CQLSH "$@"; }
 
-# Cassandra takes about a minute to start after `make up`; wait until it answers (up to 3 min).
+# Cassandra takes about a minute to start; wait until it answers (up to 3 min).
 for _ in $(seq 36); do
   if cqlsh -e "SELECT now() FROM system.local" >/dev/null 2>&1; then
     break
@@ -15,5 +17,5 @@ for _ in $(seq 36); do
   sleep 5
 done
 
-cqlsh -f /schema/schema.cql
+cqlsh < deploy/cassandra/schema.cql   # sent on stdin, so no file has to exist inside the container
 cqlsh -e "DESCRIBE TABLE fraud.txn_by_user"

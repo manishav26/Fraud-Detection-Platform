@@ -1,0 +1,48 @@
+# The gateway: the only Service reachable from outside the cluster (NodePort 30080, which
+# `make cluster` maps to localhost:8080). Same DB-less config and JWT check as compose.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: kong}
+  template:
+    metadata:
+      labels: {app: kong}
+    spec:
+      containers:
+        - name: kong
+          image: kong:3.7
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: KONG_DATABASE, value: "off"}
+            - {name: KONG_DECLARATIVE_CONFIG, value: /kong/kong.yml}
+            - {name: KONG_PROXY_LISTEN, value: "0.0.0.0:8000"}
+            - {name: KONG_ADMIN_LISTEN, value: "off"}   # no admin API inside the cluster
+            # Default is one worker per CPU the node has (12 here): over the memory limit
+            - {name: KONG_NGINX_WORKER_PROCESSES, value: "2"}
+          ports:
+            - {name: proxy, containerPort: 8000}
+          volumeMounts:
+            - {name: config, mountPath: /kong, readOnly: true}
+          readinessProbe:
+            tcpSocket: {port: 8000}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}
+      volumes:
+        - name: config
+          configMap: {name: kong-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong
+spec:
+  type: NodePort
+  selector: {app: kong}
+  ports:
+    - {name: proxy, port: 8000, nodePort: 30080}

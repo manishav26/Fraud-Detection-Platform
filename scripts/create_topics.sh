@@ -16,7 +16,9 @@ TOPICS=(
   "dlq.txn       1"
 )
 
-rpk() { docker compose exec -T redpanda rpk "$@"; }
+# How to run rpk: in the compose container by default; scripts/k8s_up.sh points it at the pod.
+RPK="${RPK:-docker compose exec -T redpanda rpk}"
+rpk() { $RPK "$@"; }
 
 existing=$(rpk topic list | awk 'NR > 1 {print $1}')
 

@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics schema cassandra-speed replay load cluster cluster-down
+.PHONY: keys up down test lint logs topics schema cassandra-speed replay load cluster cluster-down k8s-up k8s-down
 keys:
 	./scripts/gen_keys.sh
 
@@ -24,16 +24,18 @@ cassandra-speed:
 	python -m store.speed_test
 
 # Replay real payments through the gateway (needs data/processed/stream.parquet). Docs: docs/load.md
+# URL=http://localhost:8080 sends to the k3d cluster instead of compose.
+URL ?= http://localhost:8000
 SPEED ?= 1000
 LIMIT ?= 5000
 replay:
-	python -m load.replay --speed $(SPEED) --limit $(LIMIT)
+	python -m load.replay --speed $(SPEED) --limit $(LIMIT) --url $(URL)
 
 # Fake payments at a fixed rate, for load tests (no data needed)
 RPS ?= 50
 SECONDS ?= 30
 load:
-	python -m load.synthetic --rps $(RPS) --seconds $(SECONDS)
+	python -m load.synthetic --rps $(RPS) --seconds $(SECONDS) --url $(URL)
 
 lint:
 	ruff check .
@@ -41,10 +43,20 @@ lint:
 test:
 	python -m pytest -q
 
-# Local Kubernetes (used from week 4). Install once: brew install k3d
+# Local Kubernetes: 1 server + AGENTS worker nodes. Gateway NodePort 30080 -> localhost:8080;
+# your models/ folder is mounted into every node at /models. Docs: docs/k8s.md
+AGENTS ?= 2
 cluster:
-	@k3d cluster list fraud >/dev/null 2>&1 || k3d cluster create fraud
+	@k3d cluster list fraud >/dev/null 2>&1 || k3d cluster create fraud --agents $(AGENTS) \
+		-p "8080:30080@server:0" --volume "$(CURDIR)/models:/models@all"
 	kubectl get nodes
 
 cluster-down:
 	k3d cluster delete fraud
+
+# Build, import and deploy the scoring path to k3d (needs `make cluster`)
+k8s-up:
+	./scripts/k8s_up.sh
+
+k8s-down:
+	kubectl delete namespace fraud --ignore-not-found
