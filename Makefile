@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs cluster cluster-down
+.PHONY: keys up down test lint logs topics cluster cluster-down
 keys:
 	./scripts/gen_keys.sh
 
@@ -10,6 +10,10 @@ down:
 
 logs:
 	docker compose logs -f --tail=100
+
+# Redpanda topics (needs `make up` first). List and reasons: docs/topics.md
+topics:
+	./scripts/create_topics.sh
 
 lint:
 	ruff check .
