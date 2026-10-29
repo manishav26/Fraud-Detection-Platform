@@ -5,16 +5,15 @@ services:
     command: >
       redpanda start --overprovisioned --smp 1 --memory 512M --reserve-memory 0M
       --node-id 0 --check=false
-      --kafka-addr PLAINTEXT://0.0.0.0:9092
-      --advertise-kafka-addr PLAINTEXT://localhost:9092
-    ports: ["9092:9092"]
+      --kafka-addr internal://0.0.0.0:29092,external://0.0.0.0:9092
+      --advertise-kafka-addr internal://redpanda:29092,external://localhost:9092
+    ports: ["9092:9092"]  # laptop uses localhost:9092; containers use redpanda:29092
   cassandra:
     image: cassandra:4.1
     environment:
       MAX_HEAP_SIZE: 1G
       HEAP_NEWSIZE: 256M
     ports: ["9042:9042"]
-    volumes: ["./deploy/cassandra:/docker-entrypoint-initdb.d:ro"]
   postgres:
     image: postgres:16
     environment:
@@ -30,14 +29,21 @@ services:
     ports: ["9000:9000", "9001:9001"]
   token-issuer:
     build: ./services/token-issuer
+    image: fraud/token-issuer:dev   # same name in deploy/k8s
     volumes: ["./keys:/keys:ro"]
     environment: { PRIVATE_KEY_PATH: /keys/private.pem }
   scoring-svc:
-    build: ./services/scoring-svc
+    build: { context: ., dockerfile: services/scoring-svc/Dockerfile }
+    image: fraud/scoring-svc:dev
+    env_file: deploy/scoring.env
+    volumes: ["./models:/models:ro"]   # read-only: the service can't change its own model
+    depends_on: [cassandra]
+    restart: on-failure   # e.g. Cassandra still starting: exit, Docker starts us again
   ingest-svc:
     build: ./services/ingest-svc
-    environment: { SCORING_URL: "http://scoring-svc:8000" }
-    depends_on: [scoring-svc]
+    image: fraud/ingest-svc:dev
+    environment: { SCORING_URL: "http://scoring-svc:8000", KAFKA_BOOTSTRAP: "redpanda:29092" }
+    depends_on: [scoring-svc, redpanda]
   kong:
     image: kong:3.7
     environment:

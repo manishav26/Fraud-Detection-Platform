@@ -1,0 +1,47 @@
+# 2 copies of scoring-svc. The model comes from the node's /models folder (your repo's models/,
+# mounted into k3d by `make cluster`), read-only, and is checked against the pins in
+# scoring-config before it loads.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scoring-svc
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: scoring-svc}
+  template:
+    metadata:
+      labels: {app: scoring-svc}
+    spec:
+      containers:
+        - name: scoring-svc
+          image: fraud/scoring-svc:dev
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef: {name: scoring-config}
+          ports:
+            - {name: http, containerPort: 8000}
+          volumeMounts:
+            - {name: models, mountPath: /models, readOnly: true}
+          # uvicorn opens the port only after startup: model checked and loaded, Cassandra up
+          readinessProbe:
+            tcpSocket: {port: 8000}
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 250m, memory: 256Mi}
+            limits: {memory: 1Gi}
+      volumes:
+        - name: models
+          hostPath: {path: /models, type: Directory}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scoring-svc
+spec:
+  selector: {app: scoring-svc}
+  ports:
+    - {name: http, port: 8000}

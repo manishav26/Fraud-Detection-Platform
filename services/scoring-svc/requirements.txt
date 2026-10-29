@@ -1,3 +1,9 @@
-fastapi
-uvicorn
-pydantic
+fastapi==0.162.0
+uvicorn==0.54.0
+pydantic==2.14.1
+pyyaml==6.0.3
+numpy==2.4.6
+pandas==3.1.0
+# must match the version the model was trained with (docs/model_card.md)
+lightgbm==4.7.0
+cassandra-driver==3.30.1

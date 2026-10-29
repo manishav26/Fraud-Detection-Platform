@@ -14,29 +14,29 @@ LightGBM classifier with isotonic calibration. Input: the 65 features in
 
 ## Settings
 n_estimators 400, learning_rate 0.05, num_leaves 64, random_state 42,
-LightGBM 3.3.5. No tuning yet (week 3).
+LightGBM 4.7.0. No tuning yet (week 3).
 
 ## Results (test days 92-109)
 | Metric | Value |
 |---|---|
-| PR-AUC | 0.5040 |
-| Recall @ 1% FPR | 0.4278 |
+| PR-AUC | 0.4954 |
+| Recall @ 1% FPR | 0.4212 |
 | Fraud rate | 0.0351 |
-| Approve / review / decline share | 98.5% / 0.5% / 1.0% |
+| Approve / review / decline share | 98.2% / 0.8% / 1.0% |
 
 Decision thresholds (from `config/decision.yaml`): review >= 0.39,
 decline >= 0.7.
 
 ## Speed (one transaction at a time, 1000 requests, laptop)
-P50 0.05 ms, P95 0.05 ms, P99 0.06 ms. Budget: 5 ms.
+P50 0.13 ms, P95 0.18 ms, P99 0.21 ms. Budget: 5 ms.
 
 ## Files and integrity
 Saved in `models/fraud-lgbm-v1/` (not in git). SHA-256 checked on every load:
 
 | File | SHA-256 |
 |---|---|
-| model.txt | `2fc249b6fb35254870146599c9f6cf9541e9b2996525b4a7523aed7853ed883f` |
-| meta.json | `a34c06cd2a0a227fe30bcab928e7f8d536374b40d15c1de43edfa1a7ce486af6` |
+| model.txt | `ea89630b95f782820c5ef0aba348d6b5bb405e2fa266e56f18026da0582b0bec` |
+| meta.json | `204c51cba61a4b9e20bc5d6ed85d117956b48d385efa3358be8b254f762dd16e` |
 
 ## How to use (scoring service)
 ```python

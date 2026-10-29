@@ -1,0 +1,12 @@
+# Only for images built from the repo root (scoring-svc). Keeps data, models and secrets out.
+.git
+.venv
+data
+models
+keys
+notebooks
+mlruns
+*.zip
+**/__pycache__
+.pytest_cache
+.ruff_cache

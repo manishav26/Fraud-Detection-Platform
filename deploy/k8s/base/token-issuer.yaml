@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: token-issuer
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: token-issuer}
+  template:
+    metadata:
+      labels: {app: token-issuer}
+    spec:
+      containers:
+        - name: token-issuer
+          image: fraud/token-issuer:dev
+          imagePullPolicy: Never   # imported into k3d by `make k8s-up`, never pulled
+          env:
+            - {name: PRIVATE_KEY_PATH, value: /keys/private.pem}
+          ports:
+            - {name: http, containerPort: 8000}
+          volumeMounts:
+            - {name: keys, mountPath: /keys, readOnly: true}
+          readinessProbe:
+            tcpSocket: {port: 8000}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+      volumes:
+        - name: keys
+          secret: {secretName: jwt-private-key}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: token-issuer
+spec:
+  selector: {app: token-issuer}
+  ports:
+    - {name: http, port: 8000}

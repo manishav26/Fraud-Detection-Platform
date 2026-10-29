@@ -1,0 +1,46 @@
+# Single Redpanda broker, same settings as compose. No disk: topics are lost when the pod restarts
+# (fine for dev; a 3-broker StatefulSet with volumes is the production shape).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redpanda
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: redpanda}
+  template:
+    metadata:
+      labels: {app: redpanda}
+    spec:
+      containers:
+        - name: redpanda
+          image: redpandadata/redpanda:v24.2.7
+          imagePullPolicy: IfNotPresent
+          args:
+            - redpanda
+            - start
+            - --overprovisioned
+            - --smp=1
+            - --memory=512M
+            - --reserve-memory=0M
+            - --node-id=0
+            - --check=false
+            - --kafka-addr=internal://0.0.0.0:29092,external://0.0.0.0:9092
+            - --advertise-kafka-addr=internal://redpanda:29092,external://localhost:9092
+          ports:
+            - {name: kafka, containerPort: 29092}
+          readinessProbe:
+            tcpSocket: {port: 29092}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 250m, memory: 600Mi}
+            limits: {memory: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda
+spec:
+  selector: {app: redpanda}
+  ports:
+    - {name: kafka, port: 29092}
