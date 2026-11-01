@@ -31,3 +31,17 @@
 | LightGBM            | normalized  | 3      |   0.5845 |            0.4899 |    0.081  |
 | XGBoost             | normalized  | 3      |   0.5833 |            0.4908 |    0.0988 |
 | Logistic regression | normalized  | -      |   0.22   |            0.1613 |    0.3059 |
+
+
+
+## Decision
+
+Keep LightGBM with raw D columns for v1.
+
+- LightGBM and XGBoost are tied (difference within one seed standard deviation), so we keep
+  LightGBM, which is already packaged, pinned and served.
+- Normalized D gives a small but consistent gain: +0.014 PR-AUC and +1.5 points recall at
+  1% FPR (about 65 more frauds out of 4,197), better in all 6 runs. It needs a serving change
+  (day number from `ts`), a schema update and a new model, so it is left as a planned v2
+  improvement rather than changed before Gate 2.
+- Logistic regression is far behind (PR-AUC about 0.22), so tree models are needed.
