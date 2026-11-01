@@ -77,3 +77,55 @@ def test_decisions_follow_thresholds(trained):
     assert model.decide(0.39) == "review"
     assert model.decide(0.69) == "review"
     assert model.decide(0.70) == "decline"
+    
+
+
+# ---------- reasons (TreeSHAP) ----------
+
+FRAUDY = {"amount": 50.0, "ts": "2026-01-01T03:00:00Z", "attrs": {"C1": 4.0, "ProductCD": "C"}}
+
+
+def weight(reason):
+    """'C1=4 (+1.23)' -> 1.23"""
+    return float(reason.rsplit("(+", 1)[1].rstrip(")"))
+
+
+def test_shap_values_add_up_to_raw_score(trained):
+    model, _, _, X = trained
+    M = model._matrix(X.head(200).to_dict("records"))
+    contrib = model.booster.predict(M, pred_contrib=True)
+    assert np.allclose(contrib.sum(axis=1), model.booster.predict(M, raw_score=True))
+
+
+def test_reasons_are_top_3_positive_largest_first(trained):
+    model, _, _, X = trained
+    for reasons in model.explain_rows(X.head(200).to_dict("records")):
+        weights = [weight(r) for r in reasons]
+        assert len(reasons) <= 3
+        assert all(w > 0 for w in weights)
+        assert weights == sorted(weights, reverse=True)
+
+
+def test_reasons_name_the_real_fraud_pattern(trained):
+    # in the toy data, fraud = C1 > 2 and ProductCD == "C"
+    model, *_ = trained
+    reasons = model.explain_one(FRAUDY, history=None)
+    names = [r.split("=")[0] for r in reasons]
+    assert "C1" in names and "ProductCD" in names
+
+
+def test_reasons_are_readable(trained):
+    model, *_ = trained
+    reasons = model.explain_rows([{"C1": 4.0, "ProductCD": "C", "log_amount": float(np.log1p(1250))}],
+                                 top=65)[0]
+    text = " ".join(reasons)
+    assert "ProductCD=C" in text and "C1=4" in text
+    assert "log_amount" not in text            # shown as the real amount instead
+    assert all(isinstance(r, str) for r in reasons)
+
+
+def test_reasons_work_for_cold_start(trained):
+    model, *_ = trained
+    reasons = model.explain_one({"amount": 10.0, "ts": "2026-01-01T00:00:00Z",
+                                 "attrs": {"ProductCD": "NEVER_SEEN"}}, history=None)
+    assert isinstance(reasons, list) and len(reasons) <= 3
