@@ -92,7 +92,7 @@ class Decision(BaseModel):
     score: float
     decision: str
     model_version: str
-    reasons: list[str] = []  # top 3 model reasons, filled from week 3
+    reasons: list[str] = []  # up to 3 model reasons; empty when approved
     cold_start: bool = False  # true: no trusted history for this user (unknown or new)
 
 

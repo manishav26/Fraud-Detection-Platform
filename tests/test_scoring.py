@@ -23,13 +23,20 @@ def req(user, ts="2017-12-10T10:00:00Z", amount=50.0):
 
 
 class FakeModel:
-    def __init__(self):
+    def __init__(self, prob=0.8, explain_error=False):
         self.meta = {"thresholds": {"review_threshold": 0.39, "decline_threshold": 0.70}}
         self.seen_history = "not called"
+        self.prob, self.explain_error, self.explained = prob, explain_error, 0
 
     def predict_one(self, request, history=None):
         self.seen_history = history
-        return 0.8
+        return self.prob
+
+    def explain_one(self, request, history=None):
+        self.explained += 1
+        if self.explain_error:
+            raise RuntimeError("explain failed")
+        return ["C1=72 (+2.32)"]
 
     decide = scoring.FraudModel.decide
 
@@ -93,6 +100,7 @@ def test_no_model_folder_means_stub(tmp_path, monkeypatch):
     monkeypatch.setattr(scoring, "DECISION_CONFIG", ROOT / "config/decision.yaml")
     model, version = scoring.load_model()
     assert version == "stub-0" and model.decide(model.predict_one({})) == "approve"
+    assert model.explain_one({}) == []
 
 
 def test_deploy_pins_match_the_trained_model():
@@ -130,6 +138,31 @@ def test_unknown_user_gets_no_history_and_is_not_saved(client):
     assert body["cold_start"] is True
     assert scoring.app.state.model.seen_history is None
     assert store.saved == []
+
+
+@pytest.mark.parametrize("prob, decision", [(0.5, "review"), (0.8, "decline")])
+def test_flagged_payment_gets_reasons(client, prob, decision):
+    use_store(FakeStore())
+    scoring.app.state.model = FakeModel(prob)
+    body = client.post("/score", json=req(KNOWN)).json()
+    assert body["decision"] == decision and body["reasons"] == ["C1=72 (+2.32)"]
+
+
+def test_approved_payment_skips_explaining(client):
+    use_store(FakeStore())
+    scoring.app.state.model = model = FakeModel(prob=0.1)
+    body = client.post("/score", json=req(KNOWN)).json()
+    assert body["decision"] == "approve" and body["reasons"] == []
+    assert model.explained == 0
+
+
+def test_explain_failure_keeps_the_decision(client):
+    store = use_store(FakeStore())
+    scoring.app.state.model = FakeModel(explain_error=True)
+    r = client.post("/score", json=req(KNOWN))
+    assert r.status_code == 200
+    assert r.json()["decision"] == "decline" and r.json()["reasons"] == []
+    assert store.saved == ["t9"]
 
 
 def test_cassandra_down_still_scores(client):

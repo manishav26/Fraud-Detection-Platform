@@ -12,6 +12,7 @@ ingest-svc -> POST /score
                           (no earlier payments: counts are 0, cold_start = true)
   2. FraudModel.predict_one(request, history) -> calibrated probability
   3. FraudModel.decide(probability) -> approve / review / decline
+     review or decline -> FraudModel.explain_one -> top 3 reasons
   4. known user -> save the payment to Cassandra
   -> {txn_id, score, decision, model_version, reasons, cold_start}
 ```
@@ -27,6 +28,11 @@ ingest-svc -> POST /score
 - **One place decides:** `model.decide()` uses the thresholds saved inside the model (from
   `config/decision.yaml` at training time). ingest-svc no longer has its own copy (it had 0.30
   instead of 0.39).
+- **Reasons only when flagged:** TreeSHAP takes about 3.3 ms (`docs/results/reasons.md`) and about
+  98% of payments are approved, so most skip that cost. Only features that raised the risk are
+  listed, so a payment can have fewer than 3 reasons.
+- **A reason is an extra:** if explaining fails, the error is logged and the payment still gets
+  its decision, with an empty list.
 - **Save before answering:** the user's next payment must see this one. The replay sends one
   request per user at a time, so the next one starts only after this answer.
 - **Cassandra down:** the payment is still scored, as cold start, and the error is logged.
@@ -54,5 +60,6 @@ Deploying a new model means changing the pins in a reviewed PR. Swapping models 
 
 ## Not done yet
 
-- `reasons` stays empty until week 3.
+- Clients can see score and reasons, which helps someone probing the API (threat 14). Before E6,
+  roles limit clients to the decision and keep the rest for analysts.
 - User ids are stored as sent; HMAC pseudonyms (threat 8, ST11) come later.

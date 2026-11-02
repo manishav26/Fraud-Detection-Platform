@@ -5,7 +5,8 @@ Per request:
      (features/history.py, the same code as training). Unknown or new user -> cold start.
   2. Manisha's model gives a calibrated fraud probability; model.decide() turns it into
      approve / review / decline with the thresholds saved inside the model (config/decision.yaml).
-  3. Save the payment to Cassandra, so the user's next payment sees it.
+  3. Review or decline: add the top 3 reasons (TreeSHAP, model.explain_one).
+  4. Save the payment to Cassandra, so the user's next payment sees it.
 
 At startup the model files must match the SHA-256 values pinned in the deploy config
 (deploy/scoring.env), not only manifest.json in the model folder (threat 11, test ST9).
@@ -59,6 +60,9 @@ class StubModel:
     def predict_one(self, request, history=None):
         return 0.12
 
+    def explain_one(self, request, history=None):
+        return []
+
     decide = FraudModel.decide   # same rule as the real model
 
 
@@ -89,6 +93,20 @@ def history_for(store, req):
     values = {c: req.attrs.get(c) for c in NOVELTY_OF}
     features = history_for_one(past, to_datetime(req.ts).timestamp(), req.amount, values)
     return features, not past
+
+
+def reasons_for(model, decision, request, history):
+    """Top reasons for flagged payments only: about 98% are approved, which saves 3 ms each.
+
+    A reason is an extra: if explaining fails, the payment still gets its decision.
+    """
+    if decision == "approve":
+        return []
+    try:
+        return model.explain_one(request, history)
+    except Exception:
+        log.exception("could not explain %s", request["txn_id"])
+        return []
 
 
 async def connect_store(attempts=30):
@@ -127,13 +145,15 @@ class ScoreRequest(BaseModel):
 def score(req: ScoreRequest):
     # Plain `def`: FastAPI runs it in a worker thread, so the blocking Cassandra and model calls
     # don't stall other requests.
-    store = app.state.store
+    store, model, request = app.state.store, app.state.model, req.model_dump()
     history, cold_start = history_for(store, req)
-    prob = app.state.model.predict_one(req.model_dump(), history)
+    prob = model.predict_one(request, history)
+    decision = model.decide(prob)
+    reasons = reasons_for(model, decision, request, history)
     if is_known(req.user_id):
         try:
-            store.save(req.model_dump())   # before answering: the user's next payment needs it
+            store.save(request)   # before answering: the user's next payment needs it
         except Exception:
             log.exception("history write failed for %s", req.txn_id)
-    return {"txn_id": req.txn_id, "score": prob, "decision": app.state.model.decide(prob),
-            "model_version": app.state.version, "reasons": [], "cold_start": cold_start}
+    return {"txn_id": req.txn_id, "score": prob, "decision": decision,
+            "model_version": app.state.version, "reasons": reasons, "cold_start": cold_start}
