@@ -8,6 +8,8 @@ services:
       --kafka-addr internal://0.0.0.0:29092,external://0.0.0.0:9092
       --advertise-kafka-addr internal://redpanda:29092,external://localhost:9092
     ports: ["9092:9092"]  # laptop uses localhost:9092; containers use redpanda:29092
+    # Promotions live in model.events: without this, `make down` forgets which model is live
+    volumes: ["redpanda-data:/var/lib/redpanda/data"]
   cassandra:
     image: cassandra:4.1
     environment:
@@ -74,8 +76,10 @@ services:
     build: { context: ., dockerfile: services/scoring-svc/Dockerfile }
     image: fraud/scoring-svc:dev
     env_file: deploy/scoring.env
-    volumes: ["./models:/models:ro"]   # read-only: the service can't change its own model
-    depends_on: [cassandra]
+    volumes:
+      - ./models:/models:ro   # read-only: the service can't change its own model
+      - ./promotion-keys/public.pem:/promotion/public.pem:ro   # only the public key, one file
+    depends_on: [cassandra, redpanda, mlflow]
     restart: on-failure   # e.g. Cassandra still starting: exit, Docker starts us again
   ingest-svc:
     build: ./services/ingest-svc
@@ -93,5 +97,6 @@ services:
     depends_on: [ingest-svc, token-issuer]
 
 volumes:
+  redpanda-data:
   postgres-data:
   objectstore-data:

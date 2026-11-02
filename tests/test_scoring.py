@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -56,8 +57,17 @@ class FakeStore:
 
 @pytest.fixture
 def client():
-    scoring.app.state.model, scoring.app.state.version = FakeModel(), "fake-v1"
+    use_model(FakeModel())
     return TestClient(scoring.app)   # no `with`: no real model or Cassandra needed
+
+
+def use_model(model):
+    scoring.app.state.live = SimpleNamespace(current=(model, "fake-v1"))
+    return model
+
+
+def current_model():
+    return scoring.app.state.live.current[0]
 
 
 def use_store(store):
@@ -121,7 +131,7 @@ def test_known_user_gets_history_and_is_saved(client):
     body = client.post("/score", json=req(KNOWN)).json()
     assert body["decision"] == "decline" and body["model_version"] == "fake-v1"
     assert body["cold_start"] is False
-    assert scoring.app.state.model.seen_history["n_prev_txns"] == 1
+    assert current_model().seen_history["n_prev_txns"] == 1
     assert store.saved == ["t9"]
 
 
@@ -129,28 +139,28 @@ def test_known_user_first_payment_is_cold_start_with_zero_counts(client):
     use_store(FakeStore())
     body = client.post("/score", json=req(KNOWN)).json()
     assert body["cold_start"] is True
-    assert scoring.app.state.model.seen_history["n_prev_txns"] == 0   # same as training
+    assert current_model().seen_history["n_prev_txns"] == 0   # same as training
 
 
 def test_unknown_user_gets_no_history_and_is_not_saved(client):
     store = use_store(FakeStore())
     body = client.post("/score", json=req(UNKNOWN)).json()
     assert body["cold_start"] is True
-    assert scoring.app.state.model.seen_history is None
+    assert current_model().seen_history is None
     assert store.saved == []
 
 
 @pytest.mark.parametrize("prob, decision", [(0.5, "review"), (0.8, "decline")])
 def test_flagged_payment_gets_reasons(client, prob, decision):
     use_store(FakeStore())
-    scoring.app.state.model = FakeModel(prob)
+    use_model(FakeModel(prob))
     body = client.post("/score", json=req(KNOWN)).json()
     assert body["decision"] == decision and body["reasons"] == ["C1=72 (+2.32)"]
 
 
 def test_approved_payment_skips_explaining(client):
     use_store(FakeStore())
-    scoring.app.state.model = model = FakeModel(prob=0.1)
+    model = use_model(FakeModel(prob=0.1))
     body = client.post("/score", json=req(KNOWN)).json()
     assert body["decision"] == "approve" and body["reasons"] == []
     assert model.explained == 0
@@ -158,7 +168,7 @@ def test_approved_payment_skips_explaining(client):
 
 def test_explain_failure_keeps_the_decision(client):
     store = use_store(FakeStore())
-    scoring.app.state.model = FakeModel(explain_error=True)
+    use_model(FakeModel(explain_error=True))
     r = client.post("/score", json=req(KNOWN))
     assert r.status_code == 200
     assert r.json()["decision"] == "decline" and r.json()["reasons"] == []

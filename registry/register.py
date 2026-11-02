@@ -6,22 +6,15 @@ Registering does not make a model live: that takes `make promote`, and the promo
 """
 
 import argparse
-import hashlib
 import os
-from pathlib import Path
 
 import mlflow
 from mlflow import MlflowClient
 
 from ml.model import FraudModel
-from registry.signing import MODEL_FILES
+from registry.signing import MODEL_NAME, model_hashes
 
-MODEL_NAME = "fraud-lgbm"
 TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5050")
-
-
-def model_hashes(folder):
-    return {f: hashlib.sha256((Path(folder) / f).read_bytes()).hexdigest() for f in MODEL_FILES}
 
 
 def register(client, folder, validate=FraudModel.load):

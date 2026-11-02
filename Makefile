@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics schema mlflow-check register promote cassandra-speed replay load cluster cluster-down k8s-up k8s-down
+.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed replay load cluster cluster-down k8s-up k8s-down
 keys:
 	./scripts/gen_keys.sh
 
@@ -31,6 +31,10 @@ register:
 # Make a registered version live: make promote VERSION=1
 promote:
 	python -m registry.promote --version $(VERSION)
+
+# ST9 attack: change a registered model's file behind MLflow's back (docs/results/promotion.md)
+st9-tamper:
+	docker compose exec -T mlflow python - $(VERSION) < security/tests/st9_tamper_artifact.py
 
 # 10,000 writes plus read timings against the local Cassandra (needs `make schema` first)
 cassandra-speed:

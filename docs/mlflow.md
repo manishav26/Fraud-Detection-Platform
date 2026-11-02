@@ -1,8 +1,9 @@
 # MLflow model registry
 
-The catalogue of model versions, and the label saying which one is live. Parts 1 and 2 of 4 are
-done: the server, and the register and promote tools. Scoring doesn't read the messages yet
-(part 3), so a promotion doesn't change the live model yet.
+The catalogue of model versions, and the label saying which one is live. Parts 1 to 3 of 4 are
+done: the server, the register and promote tools, and live reload in scoring. Compose only for
+now: Kubernetes is part 4, and until then promotions are off there (scoring logs a warning and
+serves the pinned model).
 
 Image: `services/mlflow/`. Tools: `registry/`. Check: `make mlflow-check`.
 Web page: http://localhost:5050
@@ -59,6 +60,32 @@ make promote    download that version -> load-check -> a person checks the hashe
 | 10 s limit on publishing | aiokafka alone retries forever while the broker is down (`docs/ingest.md`) |
 | `mlflow-skinny` in the venv | Same version as the server, and it fits all our pins (checked with a dry-run install) |
 
+## Live reload in scoring (`registry/live_model.py`)
+
+Each pod reads `model.events` itself, in the background:
+
+```
+message -> signature OK? -> for this model? -> newer sequence?
+        -> download through MLflow -> files match the signed hashes? -> load fully -> swap
+```
+
+| Situation | What happens |
+|---|---|
+| Forged or junk message | Refused and logged; current model keeps serving |
+| Files changed after signing | Refused, not retried. An older genuine promotion is used if it is newer than what's running |
+| Old genuine message sent again | Refused: its sequence is lower |
+| Same message read again (reconnect) | Ignored |
+| MLflow down | Current model keeps serving; retried every 30 s |
+| New model fails to load | Current model keeps serving; retried every 30 s |
+| Redpanda down, or topic missing | Current model keeps serving; reconnects every 5 s |
+| Pod starts | Pinned model loads, then it reads the topic, for up to 30 s, before opening its port |
+
+- **Swap without errors:** the new model loads completely in a background thread. Then model and
+  version name are replaced together in one step. Each request takes one copy of the pair, so it
+  uses one model from start to finish.
+- **No consumer group:** in a group, only one pod would receive each message.
+- **Redpanda keeps its data now** (a named volume), or `make down` would forget the live model.
+
 ## Known limits
 
 - **MLflow has no login here.** Anyone who can reach the port can register a model or move the
@@ -68,8 +95,10 @@ make promote    download that version -> load-check -> a person checks the hashe
 - **A stolen private key defeats this.** It lives only on the promoter's machine for now.
 - **Each laptop has its own key pair and registry**, because they are generated locally. A shared
   deployment would have one public key in its config.
-- **Someone with write access to the topic can't forge a promotion, but could delete messages.**
-  A restarting pod would then fall back to the pinned model.
+- **Someone with write access to the topic can't forge a promotion, but could delete messages,**
+  for example with an empty or junk message under the same key, which compaction then keeps. A
+  restarting pod would fall back to the pinned model. Redpanda has no access control yet (week 4).
+- **Pods can differ for a moment** during a swap, each answering with its own `model_version`.
 - Postgres runs its setup script only when its data folder is empty. If the script changes, the
   volume must be recreated.
 - Passwords in `compose.yaml` are for local development only. Secrets are week 4 work.

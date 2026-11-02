@@ -9,7 +9,8 @@ Per request:
   4. Save the payment to Cassandra, so the user's next payment sees it.
 
 At startup the model files must match the SHA-256 values pinned in the deploy config
-(deploy/scoring.env), not only manifest.json in the model folder (threat 11, test ST9).
+(deploy/scoring.env), not only manifest.json in the model folder (threat 11, test ST9). After that,
+a signed promotion message can replace the model without a restart (registry/live_model.py).
 """
 
 import asyncio
@@ -25,11 +26,15 @@ from pydantic import BaseModel
 
 from features.history import NOVELTY_OF, history_for_one
 from ml.model import FILES, FraudModel
+from registry.live_model import LiveModel, follow_promotions
 from store.history import HistoryStore, to_datetime
 
 MODEL_DIR = Path(os.getenv("MODEL_DIR", "models/fraud-lgbm-v1"))
 DECISION_CONFIG = Path(os.getenv("DECISION_CONFIG", "config/decision.yaml"))
 PIN_ENV = {"model.txt": "MODEL_SHA256_MODEL_TXT", "meta.json": "MODEL_SHA256_META_JSON"}
+PROMOTION_KEY = Path(os.getenv("PROMOTION_PUBLIC_KEY_PATH", "promotion-keys/public.pem"))
+KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
+CATCH_UP_SECONDS = 30   # at most this long at startup to learn which model is live
 UNKNOWN_PART = "NA"   # features/proxy_id.py writes this for a missing part of the proxy id
 log = logging.getLogger("scoring")
 
@@ -123,9 +128,26 @@ async def connect_store(attempts=30):
 
 @asynccontextmanager
 async def lifespan(app):
-    app.state.model, app.state.version = load_model()
+    model, version = load_model()
     app.state.store = await connect_store()
+    follower = None
+    if PROMOTION_KEY.is_file():
+        app.state.live = LiveModel(model, version, PROMOTION_KEY.read_text(), FraudModel.load)
+        caught_up = asyncio.Event()
+        follower = asyncio.create_task(follow_promotions(app.state.live, KAFKA_BOOTSTRAP,
+                                                         caught_up))
+        try:
+            # A restarted pod should open its port already serving the promoted model
+            await asyncio.wait_for(caught_up.wait(), CATCH_UP_SECONDS)
+        except TimeoutError:
+            log.warning("promotions not read yet: serving %s and still trying", version)
+    else:
+        log.warning("no promotion key at %s: promotions are off, serving %s", PROMOTION_KEY, version)
+        app.state.live = LiveModel(model, version, None, FraudModel.load)
     yield
+    if follower:
+        follower.cancel()
+        await asyncio.gather(follower, return_exceptions=True)
     app.state.store.close()
 
 
@@ -145,7 +167,9 @@ class ScoreRequest(BaseModel):
 def score(req: ScoreRequest):
     # Plain `def`: FastAPI runs it in a worker thread, so the blocking Cassandra and model calls
     # don't stall other requests.
-    store, model, request = app.state.store, app.state.model, req.model_dump()
+    # One copy for the whole request: a swap during it can't mix two models or names
+    model, version = app.state.live.current
+    store, request = app.state.store, req.model_dump()
     history, cold_start = history_for(store, req)
     prob = model.predict_one(request, history)
     decision = model.decide(prob)
@@ -156,4 +180,4 @@ def score(req: ScoreRequest):
         except Exception:
             log.exception("history write failed for %s", req.txn_id)
     return {"txn_id": req.txn_id, "score": prob, "decision": decision,
-            "model_version": app.state.version, "reasons": reasons, "cold_start": cold_start}
+            "model_version": version, "reasons": reasons, "cold_start": cold_start}

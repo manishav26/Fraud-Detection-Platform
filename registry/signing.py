@@ -8,12 +8,15 @@ Check a message by hand (reads it from stdin, exit code 1 if it is not valid):
     python -m registry.signing < message.txt
 """
 
+import hashlib
 import json
 import sys
 from pathlib import Path
 
 import jwt
 
+MODEL_NAME = "fraud-lgbm"
+TOPIC = "model.events"
 ALGORITHM = "RS256"
 ISSUER = "fraud-platform-promoter"
 AUDIENCE = "scoring-svc"
@@ -25,6 +28,10 @@ PRIVATE_KEY = ROOT / "promotion-keys" / "private.pem"
 
 class InvalidPromotion(Exception):
     """The message must not be trusted."""
+
+
+def model_hashes(folder):
+    return {f: hashlib.sha256((Path(folder) / f).read_bytes()).hexdigest() for f in MODEL_FILES}
 
 
 def sign_promotion(model, version, sha256, sequence, private_key):

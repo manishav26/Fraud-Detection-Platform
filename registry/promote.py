@@ -17,11 +17,10 @@ from aiokafka import AIOKafkaProducer
 from mlflow import MlflowClient
 
 from ml.model import FraudModel
-from registry.register import MODEL_NAME, TRACKING_URI, model_hashes
-from registry.signing import PRIVATE_KEY, sign_promotion
+from registry.register import TRACKING_URI
+from registry.signing import MODEL_NAME, PRIVATE_KEY, TOPIC, model_hashes, sign_promotion
 
 ALIAS = "production"
-TOPIC = "model.events"
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 SEND_TIMEOUT = 10.0   # seconds; aiokafka alone keeps retrying forever (docs/ingest.md)
 

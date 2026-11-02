@@ -9,6 +9,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY features features
 COPY ml/model.py ml/model.py
 COPY store store
+# Only what scoring needs to check and load promotions, not the register and promote tools
+COPY registry/__init__.py registry/signing.py registry/live_model.py registry/
 COPY config config
 COPY services/scoring-svc/app app
 # The model is not baked in: it is mounted at /models and checked against the pinned SHA-256.
