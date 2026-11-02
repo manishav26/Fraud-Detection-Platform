@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed replay load cluster cluster-down k8s-up k8s-down
+.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed replay load stall-probe cluster cluster-down k8s-up k8s-down
 keys:
 	./scripts/gen_keys.sh
 
@@ -53,6 +53,10 @@ RPS ?= 50
 SECONDS ?= 30
 load:
 	python -m load.synthetic --rps $(RPS) --seconds $(SECONDS) --url $(URL)
+
+# Run beside a load test, to see where a slow period comes from
+stall-probe:
+	python -m load.stall_probe --url $(URL)
 
 lint:
 	ruff check .

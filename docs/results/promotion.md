@@ -40,7 +40,31 @@ refused the tampered newest promotion and used the previous genuine one (v1 at s
 - **A running k3d cluster was the main cost:** with it off, p50 fell from 185 ms to about 15 ms.
 - **The swap itself is short:** 0.24 s to download and 0.05 s to check and load. In the scoring log
   the rate stayed at 50 requests per second through the swap.
-- **Still unexplained:** the slow requests in the last run came 27 to 38 s after the swap, when the
-  rate fell to about 25 per second and then caught up. Cassandra, Redpanda, MLflow, ingest, Kong,
-  Postgres and RustFS logged nothing at that time. So a link to the promotion isn't shown, and with
-  one run lacking a promotion, neither is a link to the laptop.
+- **Control runs, no promotion:**
+
+  | Run | p50 ms | p95 ms | p99 ms |
+  |---|---:|---:|---:|
+  | Control 1 | 23.9 | 1,393.4 | 2,865.3 |
+  | Control 2 | 14.4 | 35.4 | 76.1 |
+
+- **Later runs with slow-request logging and `make stall-probe`, k3d off:**
+
+  | Run | p50 ms | p95 ms | p99 ms |
+  |---|---:|---:|---:|
+  | No promotion, run 1 | 24.3 | 132.9 | 414.7 |
+  | No promotion, run 2 | 24.4 | 76.8 | 332.0 |
+  | No promotion, run 3 | 18.5 | 60.9 | 121.2 |
+  | No promotion, run 4 | 15.0 | 39.2 | 64.6 |
+  | Promotion during the run | 15.3 | 45.0 | 109.6 |
+
+- **A promotion doesn't need to cause a stall:** the last run swapped with p95 45 ms. Big stalls
+  did appear in the first 3 promotion runs and in 1 of the first 3 runs without one, so they aren't
+  tied to promotion alone.
+- **Big stalls are unexplained.** They lasted about 10 s and none has appeared since the tools were
+  added, so the tools have not observed one. In the runs checked, Cassandra's logs showed no pauses
+  during them, and no other service logged anything.
+- **Smaller slowdowns:** most of the time was outside scoring's own steps, between ingest and
+  scoring. The probe found almost no late timers on the laptop or in the VM.
+- **For the baseline:** one run can mislead. Run it several times, and report each run. Slow-request
+  lines and `make stall-probe` stay available, and per-service metrics (week 3, step 7) should show
+  which hop slows down if it returns.

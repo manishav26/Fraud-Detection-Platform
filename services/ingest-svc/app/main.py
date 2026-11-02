@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
@@ -26,6 +27,7 @@ KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 RAW_TOPIC, DLQ_TOPIC = "txn.raw", "dlq.txn"
 MAX_DLQ_BODY = 10_000   # characters of a bad body kept in dlq.txn
 SEND_TIMEOUT = 5.0      # seconds; then the client gets a 503 instead of a hang
+SLOW_MS = 100           # log where the time went for requests slower than this
 log = logging.getLogger("ingest")
 
 
@@ -122,13 +124,19 @@ async def send_to_dlq(request: Request, exc: RequestValidationError):
 @app.post("/v1/transactions/score", response_model=Decision)
 async def score_txn(txn: Transaction, request: Request):
     record = txn.model_dump(mode="json")
+    start = time.perf_counter()
     try:
         # key = user_id: one user's payments go to one partition, so they stay in order
         await publish(request.app.state.producer, RAW_TOPIC, record, key=txn.user_id.encode())
     except KafkaError:
         log.exception("could not save %s to %s", txn.txn_id, RAW_TOPIC)
         raise HTTPException(503, "could not record the transaction; retry with the same txn_id")
+    published = time.perf_counter()
 
     # scoring-svc decides (model.decide, thresholds saved with the model): one source of truth
     body = await call_scoring(record)
+    done = time.perf_counter()
+    if (done - start) * 1000 >= SLOW_MS:
+        log.warning("slow %s: publish %.0f ms, scoring %.0f ms", txn.txn_id,
+                    (published - start) * 1000, (done - published) * 1000)
     return Decision(**body)

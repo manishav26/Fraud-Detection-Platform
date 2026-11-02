@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -35,6 +36,7 @@ PIN_ENV = {"model.txt": "MODEL_SHA256_MODEL_TXT", "meta.json": "MODEL_SHA256_MET
 PROMOTION_KEY = Path(os.getenv("PROMOTION_PUBLIC_KEY_PATH", "promotion-keys/public.pem"))
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 CATCH_UP_SECONDS = 30   # at most this long at startup to learn which model is live
+SLOW_MS = 100           # log where the time went for requests slower than this
 UNKNOWN_PART = "NA"   # features/proxy_id.py writes this for a missing part of the proxy id
 log = logging.getLogger("scoring")
 
@@ -170,14 +172,23 @@ def score(req: ScoreRequest):
     # One copy for the whole request: a swap during it can't mix two models or names
     model, version = app.state.live.current
     store, request = app.state.store, req.model_dump()
+    start = time.perf_counter()
     history, cold_start = history_for(store, req)
+    read = time.perf_counter()
     prob = model.predict_one(request, history)
     decision = model.decide(prob)
+    predicted = time.perf_counter()
     reasons = reasons_for(model, decision, request, history)
+    explained = time.perf_counter()
     if is_known(req.user_id):
         try:
             store.save(request)   # before answering: the user's next payment needs it
         except Exception:
             log.exception("history write failed for %s", req.txn_id)
+    done = time.perf_counter()
+    if (done - start) * 1000 >= SLOW_MS:
+        log.warning("slow %s: read %.0f ms, predict %.0f ms, reasons %.0f ms, write %.0f ms",
+                    req.txn_id, (read - start) * 1000, (predicted - read) * 1000,
+                    (explained - predicted) * 1000, (done - explained) * 1000)
     return {"txn_id": req.txn_id, "score": prob, "decision": decision,
             "model_version": version, "reasons": reasons, "cold_start": cold_start}
