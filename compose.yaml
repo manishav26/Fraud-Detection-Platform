@@ -21,12 +21,50 @@ services:
       POSTGRES_PASSWORD: fraud_dev_only
       POSTGRES_DB: fraud
     ports: ["5432:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data   # the registry must survive `make down`
+      - ./deploy/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Over TCP: during first-time setup Postgres listens only on its local socket
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U fraud -d mlflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
   objectstore:  # S3-compatible store (RustFS); MinIO no longer ships free images or binaries
     image: rustfs/rustfs:latest
     environment:
       RUSTFS_ACCESS_KEY: minio_dev
       RUSTFS_SECRET_KEY: minio_dev_only
     ports: ["9000:9000", "9001:9001"]
+    volumes: ["objectstore-data:/data"]
+  mlflow:  # model registry. Design: docs/mlflow.md
+    build: ./services/mlflow
+    image: fraud/mlflow:dev
+    environment:
+      # Driver named on purpose: plain postgresql:// makes SQLAlchemy look for psycopg, not psycopg2
+      MLFLOW_BACKEND_STORE_URI: postgresql+psycopg2://mlflow:mlflow_dev_only@postgres:5432/mlflow
+      MLFLOW_ARTIFACTS_DESTINATION: s3://mlflow
+      MLFLOW_S3_ENDPOINT_URL: http://objectstore:9000
+      AWS_ACCESS_KEY_ID: minio_dev
+      AWS_SECRET_ACCESS_KEY: minio_dev_only
+      AWS_DEFAULT_REGION: us-east-1
+      # Background workers for GenAI features we don't use: about 175 MB each, over the 1 GB limit
+      MLFLOW_SERVER_ENABLE_JOB_EXECUTION: "false"
+      # MLflow rejects host names it doesn't know; these are how we reach it
+      MLFLOW_SERVER_ALLOWED_HOSTS: "mlflow,mlflow:*,localhost,localhost:*,127.0.0.1:*"
+    # Laptop only, because this MLflow has no login. 5050, because macOS AirPlay uses 5000.
+    ports: ["127.0.0.1:5050:5000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      objectstore: {condition: service_started}
+    mem_limit: 1g
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
   token-issuer:
     build: ./services/token-issuer
     image: fraud/token-issuer:dev   # same name in deploy/k8s
@@ -53,3 +91,7 @@ services:
     volumes: ["./deploy/kong:/kong:ro"]
     ports: ["8000:8000"]
     depends_on: [ingest-svc, token-issuer]
+
+volumes:
+  postgres-data:
+  objectstore-data:

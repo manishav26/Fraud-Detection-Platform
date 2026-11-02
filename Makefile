@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics schema cassandra-speed replay load cluster cluster-down k8s-up k8s-down
+.PHONY: keys up down test lint logs topics schema mlflow-check cassandra-speed replay load cluster cluster-down k8s-up k8s-down
 keys:
 	./scripts/gen_keys.sh
 
@@ -18,6 +18,10 @@ topics:
 # Cassandra keyspace and table (needs `make up` first). Design: docs/cassandra.md
 schema:
 	./scripts/create_schema.sh
+
+# End-to-end check of the model registry (needs `make up`). Design: docs/mlflow.md
+mlflow-check:
+	docker compose exec -T mlflow python /srv/smoke_test.py
 
 # 10,000 writes plus read timings against the local Cassandra (needs `make schema` first)
 cassandra-speed:
