@@ -4,8 +4,14 @@ Registers a small test file as a model version, points the `production` alias at
 it through the alias and compares the bytes. Uses Postgres (records) and the object store (files).
 """
 
+import os
 import tempfile
 from pathlib import Path
+
+# Same path as our real clients (registry/__init__.py), or this check could pass inside Docker
+# using direct object store links that clients outside Docker can't reach.
+os.environ["MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD"] = "false"
+os.environ["MLFLOW_ENABLE_PROXY_MULTIPART_UPLOAD"] = "false"
 
 import mlflow
 from mlflow import MlflowClient

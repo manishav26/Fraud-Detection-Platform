@@ -4,6 +4,7 @@
 data
 models
 keys
+promotion-keys
 notebooks
 mlruns
 *.zip

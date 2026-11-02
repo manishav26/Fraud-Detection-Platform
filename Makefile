@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics schema mlflow-check cassandra-speed replay load cluster cluster-down k8s-up k8s-down
+.PHONY: keys up down test lint logs topics schema mlflow-check register promote cassandra-speed replay load cluster cluster-down k8s-up k8s-down
 keys:
 	./scripts/gen_keys.sh
 
@@ -22,6 +22,15 @@ schema:
 # End-to-end check of the model registry (needs `make up`). Design: docs/mlflow.md
 mlflow-check:
 	docker compose exec -T mlflow python /srv/smoke_test.py
+
+# Add a trained model to the registry. This does not make it live. Design: docs/mlflow.md
+MODEL_FOLDER ?= models/fraud-lgbm-v1
+register:
+	python -m registry.register --folder $(MODEL_FOLDER)
+
+# Make a registered version live: make promote VERSION=1
+promote:
+	python -m registry.promote --version $(VERSION)
 
 # 10,000 writes plus read timings against the local Cassandra (needs `make schema` first)
 cassandra-speed:
