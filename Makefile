@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-st9-tamper k8s-mlflow
+.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed backfill replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-st9-tamper k8s-mlflow
 keys:
 	./scripts/gen_keys.sh
 
@@ -39,6 +39,10 @@ st9-tamper:
 # 10,000 writes plus read timings against the local Cassandra (needs `make schema` first)
 cassandra-speed:
 	python -m store.speed_test
+
+# Load days 1-109 into Cassandra, so users have their real history (needs `make schema`)
+backfill:
+	python -m store.backfill
 
 # Replay real payments through the gateway (needs data/processed/stream.parquet). Docs: docs/load.md
 # URL=http://localhost:8080 sends to the k3d cluster instead of compose.

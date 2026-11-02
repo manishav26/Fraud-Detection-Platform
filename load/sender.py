@@ -38,13 +38,14 @@ class Token:
 class Stats:
     def __init__(self):
         self.status, self.decisions, self.latency_ms = Counter(), Counter(), []
-        self.retries, self.max_lag_s, self.rows = 0, 0.0, []
+        self.retries, self.max_lag_s, self.rows, self.cold_starts = 0, 0.0, [], 0
 
     def summary(self, wall_s):
         sent = sum(self.status.values())
         lines = [f"Sent {sent:,} payments in {wall_s:.1f} s ({sent / wall_s:,.1f} per second)",
                  f"Status codes: {dict(self.status)}",
                  f"Decisions: {dict(self.decisions)}",
+                 f"Cold starts: {self.cold_starts:,}",
                  f"Retries after 503: {self.retries}",
                  f"Furthest behind schedule: {self.max_lag_s:.2f} s"]
         if self.latency_ms:
@@ -109,6 +110,7 @@ async def run(schedule, url, concurrency=32, keep_rows=False, transport=None):
         if status == 200:
             stats.latency_ms.append(ms)
             stats.decisions[body["decision"]] += 1
+            stats.cold_starts += bool(body.get("cold_start"))
         if keep_rows:
             stats.rows.append([req["txn_id"], req["user_id"], status, body.get("decision"),
                                body.get("score"), round(ms, 2), extra])

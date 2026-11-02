@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from features.history import NOVELTY_OF, history_for_one
 from ml.model import FILES, FraudModel
 from registry.live_model import LiveModel, follow_promotions
-from store.history import HistoryStore, to_datetime
+from store.history import HistoryStore, is_known, to_datetime
 
 MODEL_DIR = Path(os.getenv("MODEL_DIR", "models/fraud-lgbm-v1"))
 DECISION_CONFIG = Path(os.getenv("DECISION_CONFIG", "config/decision.yaml"))
@@ -37,7 +37,6 @@ PROMOTION_KEY = Path(os.getenv("PROMOTION_PUBLIC_KEY_PATH", "promotion-keys/publ
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 CATCH_UP_SECONDS = 30   # at most this long at startup to learn which model is live
 SLOW_MS = 100           # log where the time went for requests slower than this
-UNKNOWN_PART = "NA"   # features/proxy_id.py writes this for a missing part of the proxy id
 log = logging.getLogger("scoring")
 
 
@@ -81,11 +80,6 @@ def load_model():
     verify_pins(MODEL_DIR, {f: os.getenv(env) for f, env in PIN_ENV.items()})
     model = FraudModel.load(MODEL_DIR)
     return model, model.meta["info"]["name"]
-
-
-def is_known(user_id):
-    """Training gives no history to ids with a missing part (uid_known = False); so do we."""
-    return UNKNOWN_PART not in user_id.split("|")
 
 
 def history_for(store, req):
