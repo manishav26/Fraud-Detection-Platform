@@ -26,6 +26,7 @@ models/
 
 # Editor and OS files
 .vscode/
+.claude/
 .idea/
 .DS_Store
 # Platform (Urmi)

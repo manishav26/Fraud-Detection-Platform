@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 NS=fraud
 IMAGES=(fraud/token-issuer:dev fraud/ingest-svc:dev fraud/scoring-svc:dev)
-PUBLIC=(kong:3.7 redpandadata/redpanda:v24.2.7 cassandra:4.1)
+PUBLIC=(kong:3.7 redpandadata/redpanda:v24.2.7 cassandra:4.1 postgres:16 rustfs/rustfs:latest)
 
 echo "1/5 build our images and copy them into the cluster"
 ./scripts/gen_keys.sh
@@ -31,17 +31,28 @@ kubectl -n "$NS" create configmap kong-config \
   --from-file=kong.yml=deploy/kong/kong.yml --dry-run=client -o yaml | apply
 kubectl -n "$NS" create configmap scoring-config \
   --from-env-file=deploy/scoring.env --dry-run=client -o yaml | apply
+kubectl -n "$NS" create configmap postgres-init \
+  --from-file=deploy/postgres/init-mlflow.sql --dry-run=client -o yaml | apply
+# Dev passwords, the same as compose. Encrypted secrets are week 4 work.
+kubectl -n "$NS" create secret generic postgres-credentials \
+  --from-literal=POSTGRES_USER=fraud --from-literal=POSTGRES_PASSWORD=fraud_dev_only \
+  --dry-run=client -o yaml | apply
+kubectl -n "$NS" create secret generic objectstore-credentials \
+  --from-literal=RUSTFS_ACCESS_KEY=minio_dev --from-literal=RUSTFS_SECRET_KEY=minio_dev_only \
+  --dry-run=client -o yaml | apply
 
 echo "3/5 apply the Kustomize base"
 kubectl apply -k deploy/k8s/base
 # config maps don't restart pods by themselves; restart ours so they read the current values
 kubectl -n "$NS" rollout restart deploy/token-issuer deploy/scoring-svc deploy/ingest-svc deploy/kong
 
-echo "4/5 wait for Redpanda and Cassandra, then create topics and the table"
-kubectl -n "$NS" rollout status deploy/redpanda --timeout=180s
-kubectl -n "$NS" rollout status deploy/cassandra --timeout=300s
-RPK="kubectl -n $NS exec -i deploy/redpanda -- rpk" ./scripts/create_topics.sh
-CQLSH="kubectl -n $NS exec -i deploy/cassandra -- cqlsh" ./scripts/create_schema.sh
+echo "4/5 wait for the data services, then create topics and the table"
+kubectl -n "$NS" rollout status statefulset/redpanda --timeout=180s
+kubectl -n "$NS" rollout status statefulset/cassandra --timeout=300s
+kubectl -n "$NS" rollout status statefulset/postgres --timeout=180s
+kubectl -n "$NS" rollout status statefulset/objectstore --timeout=180s
+RPK="kubectl -n $NS exec -i redpanda-0 -- rpk" ./scripts/create_topics.sh
+CQLSH="kubectl -n $NS exec -i cassandra-0 -- cqlsh" ./scripts/create_schema.sh
 
 echo "5/5 wait for our services (they retry until Redpanda and Cassandra answer)"
 for d in token-issuer scoring-svc ingest-svc kong; do

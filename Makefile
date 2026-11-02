@@ -79,5 +79,7 @@ cluster-down:
 k8s-up:
 	./scripts/k8s_up.sh
 
+# Deletes everything in the namespace, INCLUDING its disks: topics, history and the model registry.
+# To pause and keep the data, use `k3d cluster stop fraud`.
 k8s-down:
 	kubectl delete namespace fraud --ignore-not-found

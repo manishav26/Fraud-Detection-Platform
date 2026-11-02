@@ -17,7 +17,17 @@ your laptop). Only Kong is reachable from outside; everything else is a ClusterI
 |---|---|---|
 | ingest-svc, scoring-svc | Deployment, 2 replicas | stateless: copies share the load, and one can die without an outage |
 | kong, token-issuer | Deployment, 1 replica | enough for dev |
-| redpanda, cassandra | Deployment, 1 replica, no disk | dev only: data is lost on restart. Production shape is a 3-node StatefulSet with volumes (later) |
+| redpanda, cassandra, postgres, objectstore | StatefulSet, 1 replica, with a disk | they hold data: topics and the live model, user history, the registry's records and files. 3-copy versions come later |
+
+## Storage
+
+Each data service has a PersistentVolumeClaim on k3d's built-in `local-path` storage, so its data
+survives a pod restart. Two things to know:
+
+- **A disk belongs to one node.** The pod has to return to that node, so if the node is lost, so
+  is the service and its data. Real fault tolerance needs 3 copies across nodes.
+- **`make k8s-down` deletes the disks too,** because it deletes the namespace. That includes the
+  model registry and live model. To pause and keep everything: `k3d cluster stop fraud`.
 
 ## Where config comes from
 
