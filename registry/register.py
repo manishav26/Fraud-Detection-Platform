@@ -44,7 +44,7 @@ def main():
     print(f"Registered {MODEL_NAME} version {version}. It is NOT live yet.")
     for f, h in hashes.items():
         print(f"  {f}  {h}")
-    print(f"To make it live: make promote VERSION={version}")
+    print(f"To make it live: make promote VERSION={version} (on Kubernetes: make k8s-promote)")
 
 
 if __name__ == "__main__":

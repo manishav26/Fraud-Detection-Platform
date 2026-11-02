@@ -3,7 +3,8 @@
 #   secret     jwt-private-key  keys/private.pem        (token-issuer)
 #   configmap  kong-config      deploy/kong/kong.yml    (kong)
 #   configmap  scoring-config   deploy/scoring.env      (scoring-svc, includes the model pins)
-#   configmap  postgres-init    deploy/postgres/        (postgres: creates the mlflow database)
+#   configmap  promotion-public-key  promotion-keys/public.pem  (scoring-svc checks promotions)
+#   configmap  postgres-init   deploy/postgres/        (postgres: creates the mlflow database)
 #   secret     postgres-credentials, objectstore-credentials, mlflow-credentials   (dev passwords)
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

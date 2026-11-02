@@ -1,9 +1,7 @@
 # MLflow model registry
 
-The catalogue of model versions, and the label saying which one is live. Parts 1 to 3 of 4 are
-done: the server, the register and promote tools, and live reload in scoring. Compose only for
-now: Kubernetes is part 4, and until then promotions are off there (scoring logs a warning and
-serves the pinned model).
+The catalogue of model versions, and the label saying which one is live. Includes the server, the
+register and promote tools, and live reload in scoring, on compose and on Kubernetes (`docs/k8s.md`).
 
 Image: `services/mlflow/`. Tools: `registry/`. Check: `make mlflow-check`.
 Web page: http://localhost:5050

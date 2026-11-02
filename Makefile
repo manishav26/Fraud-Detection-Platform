@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-mlflow
+.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-st9-tamper k8s-mlflow
 keys:
 	./scripts/gen_keys.sh
 
@@ -88,6 +88,10 @@ k8s-register:
 
 k8s-promote:
 	./scripts/k8s_registry.sh python -m registry.promote --version $(VERSION)
+
+# ST9 attack on the cluster: change a registered model's file behind MLflow's back
+k8s-st9-tamper:
+	kubectl -n fraud exec -i deploy/mlflow -- python - $(VERSION) < security/tests/st9_tamper_artifact.py
 
 # Keeps a tunnel open for the web page, http://localhost:5050, until you press Ctrl+C
 k8s-mlflow:

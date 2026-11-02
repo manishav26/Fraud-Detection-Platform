@@ -31,6 +31,9 @@ kubectl -n "$NS" create configmap kong-config \
   --from-file=kong.yml=deploy/kong/kong.yml --dry-run=client -o yaml | apply
 kubectl -n "$NS" create configmap scoring-config \
   --from-env-file=deploy/scoring.env --dry-run=client -o yaml | apply
+# The public half only: the private key stays on the laptop and never enters the cluster
+kubectl -n "$NS" create configmap promotion-public-key \
+  --from-file=public.pem=promotion-keys/public.pem --dry-run=client -o yaml | apply
 kubectl -n "$NS" create configmap postgres-init \
   --from-file=deploy/postgres/init-mlflow.sql --dry-run=client -o yaml | apply
 # Dev passwords, the same as compose. Encrypted secrets are week 4 work.

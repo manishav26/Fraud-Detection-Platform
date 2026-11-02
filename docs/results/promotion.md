@@ -26,6 +26,24 @@ refused the tampered newest promotion and used the previous genuine one (v1 at s
 
 **ST9 passes:** scoring refused the swapped file and kept serving a trusted model.
 
+## On Kubernetes
+
+k3d cluster with 3 nodes and 2 scoring pods, deployed with `make k8s-up`.
+
+| Check | Result |
+|---|---|
+| Promote version 2 during a 50/s load test | Both pods logged `now serving fraud-lgbm-v2`; 3,000 of 3,000 answered 200; every later answer said v2 |
+| Delete a scoring pod | Its replacement answered v2 right away, not the pinned v1 |
+| Delete Redpanda, then a scoring pod | Still v2: the promotion was kept on Redpanda's disk |
+| Forged message | Both pods: `refused promotion message` |
+| Oldest message left in the topic sent again | Both pods: `refused old promotion`, stayed on v1 |
+| Version 3 signed, then its file changed, with scoring stopped | Both new pods: `refused model ... does not match its signed SHA-256`, then served v1, the last genuine promotion |
+
+**ST9 passes on Kubernetes too**, on both pods.
+
+Latency in that load test was p50 30.7 ms, p95 1,708 ms, p99 3,221 ms, with no errors. The cluster
+shares the laptop's CPU with everything else, and the slow period isn't explained (see below).
+
 ## Open: latency during the promotion test
 
 `make load RPS=50 SECONDS=60`, all 3,000 answered 200 in every run:
