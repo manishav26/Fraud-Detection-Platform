@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed replay load stall-probe cluster cluster-down k8s-up k8s-down
+.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-mlflow
 keys:
 	./scripts/gen_keys.sh
 
@@ -78,6 +78,20 @@ cluster-down:
 # Build, import and deploy the scoring path to k3d (needs `make cluster`)
 k8s-up:
 	./scripts/k8s_up.sh
+
+# The cluster's registry, through tunnels (needs `make k8s-up`, and compose stopped). docs/k8s.md
+k8s-mlflow-check:
+	kubectl -n fraud exec -i deploy/mlflow -- python /srv/smoke_test.py
+
+k8s-register:
+	./scripts/k8s_registry.sh python -m registry.register --folder $(MODEL_FOLDER)
+
+k8s-promote:
+	./scripts/k8s_registry.sh python -m registry.promote --version $(VERSION)
+
+# Keeps a tunnel open for the web page, http://localhost:5050, until you press Ctrl+C
+k8s-mlflow:
+	kubectl -n fraud port-forward service/mlflow 5050:5000
 
 # Deletes everything in the namespace, INCLUDING its disks: topics, history and the model registry.
 # To pause and keep the data, use `k3d cluster stop fraud`.

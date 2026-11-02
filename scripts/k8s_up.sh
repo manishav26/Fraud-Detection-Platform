@@ -5,12 +5,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 NS=fraud
-IMAGES=(fraud/token-issuer:dev fraud/ingest-svc:dev fraud/scoring-svc:dev)
+IMAGES=(fraud/token-issuer:dev fraud/ingest-svc:dev fraud/scoring-svc:dev fraud/mlflow:dev)
 PUBLIC=(kong:3.7 redpandadata/redpanda:v24.2.7 cassandra:4.1 postgres:16 rustfs/rustfs:latest)
 
 echo "1/5 build our images and copy them into the cluster"
 ./scripts/gen_keys.sh
-docker compose build token-issuer ingest-svc scoring-svc
+docker compose build token-issuer ingest-svc scoring-svc mlflow
 for img in "${PUBLIC[@]}"; do
   docker image inspect "$img" >/dev/null 2>&1 || docker pull "$img"
 done
@@ -40,11 +40,16 @@ kubectl -n "$NS" create secret generic postgres-credentials \
 kubectl -n "$NS" create secret generic objectstore-credentials \
   --from-literal=RUSTFS_ACCESS_KEY=minio_dev --from-literal=RUSTFS_SECRET_KEY=minio_dev_only \
   --dry-run=client -o yaml | apply
+# Only MLflow gets these: clients reach the files through MLflow, never the store directly
+kubectl -n "$NS" create secret generic mlflow-credentials \
+  --from-literal=MLFLOW_BACKEND_STORE_URI=postgresql+psycopg2://mlflow:mlflow_dev_only@postgres:5432/mlflow \
+  --from-literal=AWS_ACCESS_KEY_ID=minio_dev --from-literal=AWS_SECRET_ACCESS_KEY=minio_dev_only \
+  --dry-run=client -o yaml | apply
 
 echo "3/5 apply the Kustomize base"
 kubectl apply -k deploy/k8s/base
 # config maps don't restart pods by themselves; restart ours so they read the current values
-kubectl -n "$NS" rollout restart deploy/token-issuer deploy/scoring-svc deploy/ingest-svc deploy/kong
+kubectl -n "$NS" rollout restart deploy/token-issuer deploy/mlflow deploy/scoring-svc deploy/ingest-svc deploy/kong
 
 echo "4/5 wait for the data services, then create topics and the table"
 kubectl -n "$NS" rollout status statefulset/redpanda --timeout=180s
@@ -55,7 +60,7 @@ RPK="kubectl -n $NS exec -i redpanda-0 -- rpk" ./scripts/create_topics.sh
 CQLSH="kubectl -n $NS exec -i cassandra-0 -- cqlsh" ./scripts/create_schema.sh
 
 echo "5/5 wait for our services (they retry until Redpanda and Cassandra answer)"
-for d in token-issuer scoring-svc ingest-svc kong; do
+for d in mlflow token-issuer scoring-svc ingest-svc kong; do
   kubectl -n "$NS" rollout status "deploy/$d" --timeout=300s
 done
 kubectl -n "$NS" get pods -o wide
