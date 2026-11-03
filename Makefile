@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed backfill replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-st9-tamper k8s-mlflow
+.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed backfill replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-st9-tamper k8s-mlflow
 keys:
 	./scripts/gen_keys.sh
 
@@ -87,11 +87,17 @@ k8s-up:
 k8s-mlflow-check:
 	kubectl -n fraud exec -i deploy/mlflow -- python /srv/smoke_test.py
 
+REGISTRY_TUNNELS := service/mlflow=5050:5000 pod/redpanda-0=9092:9092
+
 k8s-register:
-	./scripts/k8s_registry.sh python -m registry.register --folder $(MODEL_FOLDER)
+	./scripts/k8s_tunnel.sh $(REGISTRY_TUNNELS) -- python -m registry.register --folder $(MODEL_FOLDER)
 
 k8s-promote:
-	./scripts/k8s_registry.sh python -m registry.promote --version $(VERSION)
+	./scripts/k8s_tunnel.sh $(REGISTRY_TUNNELS) -- python -m registry.promote --version $(VERSION)
+
+# Load days 1-109 into the cluster's Cassandra, through a tunnel
+k8s-backfill:
+	./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.backfill
 
 # ST9 attack on the cluster: change a registered model's file behind MLflow's back
 k8s-st9-tamper:

@@ -19,16 +19,16 @@ your laptop). Only Kong is reachable from outside; everything else is a ClusterI
 | kong, token-issuer | Deployment, 1 replica | enough for dev |
 | redpanda, cassandra, postgres, objectstore | StatefulSet, 1 replica, with a disk | they hold data: topics and the live model, user history, the registry's records and files. 3-copy versions come later |
 
-## Reaching the registry from the laptop
+## Reaching the cluster from the laptop
 
-MLflow has no login, so it is only a ClusterIP Service. `make k8s-register`, `make k8s-promote` and
-`make k8s-mlflow` go through `kubectl port-forward` tunnels:
+MLflow has no login, so it is only a ClusterIP Service. `make k8s-register`, `make k8s-promote`,
+`make k8s-backfill` and `make k8s-mlflow` go through `kubectl port-forward` tunnels:
 
 - **Nothing new is open** outside the cluster, and the tunnels close when the command ends.
 - **The promotion private key never enters the cluster:** signing happens on the laptop.
-- **Stops if port 5050 or 9092 is taken.** Compose uses the same ports, and a tunnel that failed
-  to open could otherwise send the command to compose's registry instead.
-- The cluster's registry is separate from compose's, so register there separately.
+- **Stops if a port it needs is taken.** Compose uses the same ports, and a tunnel that failed to
+  open could otherwise send the command to compose instead.
+- The cluster's registry and history are separate from compose's, so load them separately.
 
 ## Storage
 

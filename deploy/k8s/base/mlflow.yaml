@@ -1,5 +1,5 @@
 # Model registry, same settings as compose (docs/mlflow.md). Inside the cluster only, because it has
-# no login: from the laptop, go through the tunnel in scripts/k8s_registry.sh.
+# no login: from the laptop, go through the tunnel in scripts/k8s_tunnel.sh.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
