@@ -8,8 +8,8 @@ Actual fraud rate on days 92-109: 0.0351
 
 | scores       |   Brier score |   mean predicted |   PR-AUC |
 |:-------------|--------------:|-----------------:|---------:|
-| raw LightGBM |        0.0231 |           0.0244 |   0.5179 |
-| calibrated   |        0.0228 |           0.0326 |   0.504  |
+| raw LightGBM |        0.0232 |           0.0226 |   0.5167 |
+| calibrated   |        0.0227 |           0.0326 |   0.4966 |
 
 ![reliability](../figures/reliability.png)
 
@@ -19,16 +19,16 @@ Chosen on days 74-91 to minimise missed fraud dollars + review cost per flagged 
 
 |   review cost ($) |   review threshold |   flagged (test) | share flagged   |   frauds caught (test) |   frauds total (test) |   expected cost (test, $) |
 |------------------:|-------------------:|-----------------:|:----------------|-----------------------:|----------------------:|--------------------------:|
-|                 2 |               0.39 |              910 | 1.5%            |                    715 |                  2110 |                    287982 |
-|                 5 |               0.39 |              910 | 1.5%            |                    715 |                  2110 |                    290712 |
-|                10 |               0.39 |              910 | 1.5%            |                    715 |                  2110 |                    295262 |
+|                 2 |               0.55 |              771 | 1.3%            |                    643 |                  2110 |                    298712 |
+|                 5 |               0.55 |              771 | 1.3%            |                    643 |                  2110 |                    301025 |
+|                10 |               0.55 |              771 | 1.3%            |                    643 |                  2110 |                    304880 |
 
 ## Proposed decision rule (review cost $5)
 
-approve below 0.39, review from 0.39 to 0.7, decline at 0.7 or above (calibrated probabilities).
+approve below 0.55, review from 0.55 to 0.7, decline at 0.7 or above (calibrated probabilities).
 
 | decision   |   fraud |   normal |
 |:-----------|--------:|---------:|
-| approve    |    1395 |    57861 |
-| review     |     179 |      133 |
-| decline    |     536 |       62 |
+| approve    |    1467 |    57928 |
+| review     |      73 |       45 |
+| decline    |     570 |       83 |

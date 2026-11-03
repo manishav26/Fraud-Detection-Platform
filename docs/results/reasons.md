@@ -6,34 +6,34 @@ For every payment the model returns the top 3 features that pushed the score tow
 
 | step               |   P50 ms |   P95 ms |   P99 ms |
 |:-------------------|---------:|---------:|---------:|
-| score only         |     0.06 |     0.07 |     0.07 |
-| reasons (TreeSHAP) |     3.26 |     3.32 |     3.38 |
+| score only         |     0.1  |     0.1  |     0.11 |
+| reasons (TreeSHAP) |     2.84 |     2.89 |     2.92 |
 
-Reasons P95 3.32 ms: within the 10 ms budget.
+Reasons P95 2.89 ms: within the 10 ms budget.
 
-## Most common reasons (1,084 flagged payments: review or decline)
+## Most common reasons (771 flagged payments: review or decline)
 
 | feature       |   in top 3 (flagged) |   top reason (flagged) |
 |:--------------|---------------------:|-----------------------:|
-| C1            |                  658 |                    478 |
-| C13           |                  461 |                     61 |
-| C14           |                  412 |                    348 |
-| R_emaildomain |                  262 |                      6 |
-| C11           |                  194 |                     12 |
-| C4            |                  193 |                      5 |
-| C7            |                  182 |                      1 |
-| amount        |                  164 |                     25 |
-| card6         |                  116 |                     24 |
-| D3            |                   94 |                     40 |
+| C1            |                  546 |                    398 |
+| C14           |                  306 |                    257 |
+| C13           |                  305 |                     17 |
+| C4            |                  298 |                      7 |
+| C11           |                  270 |                      5 |
+| amount        |                  113 |                     31 |
+| R_emaildomain |                   98 |                      5 |
+| D8            |                   76 |                     22 |
+| D14           |                   48 |                      1 |
+| C6            |                   39 |                      5 |
 
 ## Highest-risk examples
 
-|   fraud probability | decision   |   really fraud | reasons                                                              |
-|--------------------:|:-----------|---------------:|:---------------------------------------------------------------------|
-|               1     | decline    |              1 | C13=0 (+1.39); amount=350.00 (+1.16); R_emaildomain=mail.com (+1.09) |
-|               0.997 | decline    |              1 | C1=12 (+1.89); C13=0 (+1.39); C11=10 (+1.37)                         |
-|               0.987 | decline    |              1 | amount=350.00 (+1.17); C13=0 (+1.05); R_emaildomain=mail.com (+1.04) |
-|               0.987 | decline    |              1 | C1=72 (+2.32); C13=2 (+0.77); C6=19 (+0.76)                          |
-|               0.987 | decline    |              1 | C1=201 (+2.13); C4=54 (+0.79); C7=54 (+0.61)                         |
+|   fraud probability | decision   |   really fraud | reasons                                             |
+|--------------------:|:-----------|---------------:|:----------------------------------------------------|
+|               0.983 | decline    |              1 | C1=195 (+1.70); C4=54 (+1.30); C11=146 (+1.02)      |
+|               0.983 | decline    |              1 | C1=81 (+2.04); C4=17 (+1.35); C11=18 (+0.97)        |
+|               0.983 | decline    |              1 | C1=198 (+1.79); C4=54 (+1.39); C11=149 (+1.06)      |
+|               0.983 | decline    |              1 | C14=0 (+1.89); C1=5 (+1.60); D14=2 (+0.86)          |
+|               0.983 | decline    |              1 | C1=75 (+1.56); C4=23 (+1.28); amount=300.00 (+1.22) |
 
 The number after each reason is its SHAP value in log-odds: how much that feature raised the model's raw score for this payment.

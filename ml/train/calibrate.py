@@ -13,6 +13,7 @@ from pathlib import Path
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+import yaml
 from sklearn.calibration import calibration_curve
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import average_precision_score, brier_score_loss
@@ -37,6 +38,15 @@ REVIEW_COSTS = [2.0, 5.0, 10.0]   # assumed cost of one analyst review, in dolla
 MAIN_REVIEW_COST = 5.0
 REVIEW_CAPACITY = 0.02            # analysts can review at most 2% of payments
 
+BASE_PARAMS = {"n_estimators": 400, "learning_rate": 0.05, "num_leaves": 64}  # untuned v1
+PARAMS_FILE = ROOT / "ml" / "configs" / "lgbm.yaml"
+
+
+def model_params():
+    """Tuned settings from ml/configs/lgbm.yaml (written by tune.py), else the v1 defaults."""
+    if PARAMS_FILE.exists():
+        return yaml.safe_load(PARAMS_FILE.read_text())
+    return dict(BASE_PARAMS)
 def load_data():
     cols = NUMERIC + CATEGORICAL + ["TransactionDT", "TransactionAmt", TARGET]
     parts = []
@@ -60,8 +70,8 @@ def to_model_input(df, categories=None):
 
 def train_model(train):
     X, categories = to_model_input(train)
-    model = lgb.LGBMClassifier(n_estimators=400, learning_rate=0.05, num_leaves=64,
-                               random_state=42, verbose=-1)
+    model = lgb.LGBMClassifier(**model_params(), random_state=42, n_jobs=8,
+                               deterministic=True, force_col_wise=True, verbose=-1)
     model.fit(X, train[TARGET])
     return model, categories
 
