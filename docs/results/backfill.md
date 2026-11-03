@@ -28,6 +28,21 @@ after a replay had added newer rows.
 - **Almost no change in fraud results here:** only 3 decisions changed, 1 catching a fraud (0.37 to
   0.91, now declined) and 2 false alarms. That fits E2's small gain (+0.003 PR-AUC). 5,000 payments
   and 178 frauds are too few to say more. The full stream and the parity test are the real checks.
-- **Possibly slower:** 25% fewer payments per second, as users have more history to read. This is
-  one run each at full speed, and earlier runs have varied a lot, so treat it as a question for the
-  baseline, not a result.
+- **Possibly slower on compose:** 25% fewer payments per second, as users have more history to
+  read. But the same comparison on Kubernetes shows no drop (below). These are single runs and earlier
+  runs have varied a lot, so treat it as a question for the baseline, not a result.
+
+## On Kubernetes
+
+`make k8s-backfill`, through a tunnel to the cluster's Cassandra: 337,614 rows at about 1,900 rows per
+second, about 3 minutes, and the driver needed no extra address setting.
+
+| | Before | After backfill |
+|---|---:|---:|
+| Cold starts | 4,073 | 1,994 |
+| Approve / review / decline | 4,921 / 42 / 37 | 4,918 / 44 / 38 |
+| Payments per second, at full speed | 65 | 68 |
+| p50 latency at full speed | 315 ms | 304 ms |
+
+Cold starts and decisions match compose exactly. Stored counts still matched for 1,000 sampled users
+after deleting the Cassandra pod, so the history is safe on its disk.
