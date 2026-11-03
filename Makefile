@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow
+.PHONY: keys up down test lint logs topics schema db-schema verify-audit k8s-verify-audit mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow
 keys:
 	./scripts/gen_keys.sh
 
@@ -18,6 +18,14 @@ topics:
 # Cassandra keyspace and table (needs `make up` first). Design: docs/cassandra.md
 schema:
 	./scripts/create_schema.sh
+
+# Cases and audit-log tables, and alert-svc's login (needs `make up`). Design: docs/alerts.md
+db-schema:
+	./scripts/create_db_schema.sh
+
+# Recompute the audit log's hash chain; names the first broken row (ST8)
+verify-audit:
+	python -m audit.verify
 
 # End-to-end check of the model registry (needs `make up`). Design: docs/mlflow.md
 mlflow-check:
@@ -102,6 +110,9 @@ k8s-promote:
 # Load days 1-109 into the cluster's Cassandra, through a tunnel
 k8s-backfill:
 	./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.backfill
+
+k8s-verify-audit:
+	./scripts/k8s_tunnel.sh service/postgres=5432:5432 -- python -m audit.verify
 
 k8s-read-timing:
 	./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.read_timing

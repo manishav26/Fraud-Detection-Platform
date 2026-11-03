@@ -33,13 +33,20 @@ def client(monkeypatch):
     monkeypatch.setattr(main, "call_scoring", fake_scoring)
     # The test client stops its event loop after each request, which would cancel background
     # work. So collect it here, and tests run it with run_background().
-    background.clear()
     monkeypatch.setattr(main, "in_background", background.append)
     main.app.state.producer = FakeProducer()
-    return TestClient(main.app)   # no `with`: skips startup, so no real Redpanda needed
+    yield TestClient(main.app)   # no `with`: skips startup, so no real Redpanda needed
+    discard_background()
 
 
 background = []
+
+
+def discard_background():
+    """Close work a test didn't run, so Python doesn't warn that it was never awaited."""
+    for coroutine in background:
+        coroutine.close()
+    background.clear()
 
 
 def run_background():

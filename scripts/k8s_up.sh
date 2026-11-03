@@ -61,6 +61,7 @@ kubectl -n "$NS" rollout status statefulset/postgres --timeout=180s
 kubectl -n "$NS" rollout status statefulset/objectstore --timeout=180s
 RPK="kubectl -n $NS exec -i redpanda-0 -- rpk" ./scripts/create_topics.sh
 CQLSH="kubectl -n $NS exec -i cassandra-0 -- cqlsh" ./scripts/create_schema.sh
+PSQL="kubectl -n $NS exec -i postgres-0 -- psql" ./scripts/create_db_schema.sh
 
 echo "5/5 wait for our services (they retry until Redpanda and Cassandra answer)"
 for d in mlflow token-issuer scoring-svc ingest-svc kong; do
