@@ -4,6 +4,7 @@ Flow per request (design: docs/ingest.md):
   1. FastAPI checks the body against the contract. Bad body -> copy to dlq.txn, return 422.
   2. Save the payment to txn.raw (acks=all, idempotent, key user_id). Fails -> 503, client retries.
   3. Ask scoring-svc for score and decision and return it right away (contract: 200 + decision).
+  4. In the background, publish payment + decision to txn.scored, where alert-svc opens cases.
 """
 
 import asyncio
@@ -24,11 +25,15 @@ from pydantic import AwareDatetime, BaseModel, Field
 
 SCORING_URL = os.getenv("SCORING_URL", "http://scoring-svc:8000")
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
-RAW_TOPIC, DLQ_TOPIC = "txn.raw", "dlq.txn"
+RAW_TOPIC, DLQ_TOPIC, SCORED_TOPIC = "txn.raw", "dlq.txn", "txn.scored"
 MAX_DLQ_BODY = 10_000   # characters of a bad body kept in dlq.txn
 SEND_TIMEOUT = 5.0      # seconds; then the client gets a 503 instead of a hang
 SLOW_MS = 100           # log where the time went for requests slower than this
 log = logging.getLogger("ingest")
+# Payments whose decision never reached txn.scored, so no case can open for them. Exposed as a
+# metric in week 3, step 7.
+counters = {"scored_publish_failures": 0}
+_background = set()   # running publish tasks; kept here so Python doesn't drop them half-way
 
 
 def new_producer():
@@ -74,6 +79,8 @@ async def lifespan(app):
     app.state.http = httpx.AsyncClient(base_url=SCORING_URL, timeout=5.0)
     yield
     await app.state.http.aclose()
+    # Let decisions still being published reach txn.scored before the producer closes
+    await asyncio.gather(*_background, return_exceptions=True)
     await app.state.producer.stop()
 
 
@@ -108,6 +115,26 @@ async def call_scoring(record):
     return r.json()
 
 
+async def publish_scored(producer, record, decision):
+    """Payment + decision to txn.scored. Runs after the client has its answer: the decision is
+    made and the payment is already safe in txn.raw, so a failure here must not become an error.
+    The cost is that a flagged payment could miss its case, so every failure is logged and counted.
+    """
+    try:
+        await publish(producer, SCORED_TOPIC, {**record, **decision, "scored_at": now()},
+                      key=record["user_id"].encode())
+    except KafkaError:
+        counters["scored_publish_failures"] += 1
+        log.warning("could not publish %s to %s (decision %s): no case will open for it",
+                    record["txn_id"], SCORED_TOPIC, decision.get("decision"))
+
+
+def in_background(coroutine):
+    task = asyncio.create_task(coroutine)
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
 @app.exception_handler(RequestValidationError)
 async def send_to_dlq(request: Request, exc: RequestValidationError):
     """Keep a copy of every rejected body in dlq.txn, then answer 422 as FastAPI normally does."""
@@ -140,4 +167,6 @@ async def score_txn(txn: Transaction, request: Request):
     if (done - start) * 1000 >= SLOW_MS:
         log.warning("slow %s: publish %.0f ms, scoring %.0f ms", txn.txn_id,
                     (published - start) * 1000, (done - published) * 1000)
-    return Decision(**body)
+    decision = Decision(**body)
+    in_background(publish_scored(request.app.state.producer, record, decision.model_dump()))
+    return decision

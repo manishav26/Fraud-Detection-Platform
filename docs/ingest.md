@@ -9,7 +9,14 @@ client -> Kong (JWT check) -> ingest-svc
    1. body matches the contract?   no  -> copy to dlq.txn, answer 422
    2. save to txn.raw              fails -> answer 503 (client retries)
    3. ask scoring-svc for score -> answer 200 with the decision
+   4. in the background: payment + decision -> txn.scored (alert-svc opens cases from it)
 ```
+
+**Why step 4 runs after answering:** the decision is made and the payment is already safe in
+`txn.raw`. Waiting would only slow every payment, by up to 5 s if Redpanda struggles. If the publish
+fails, the client still has its answer, but a flagged payment could miss its case. Each failure is
+logged with its `txn_id` and counted (`scored_publish_failures`, a metric from week 3, step 7). At
+shutdown, ingest waits for publishes still running before closing its producer.
 
 The client always gets its decision in the same request (the contract we agreed: 200 + decision).
 
