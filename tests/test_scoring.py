@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from store.guarded import GuardedStore
+
 ROOT = Path(__file__).resolve().parents[1]
 
 # Both services have a package called `app`; load scoring's by path so it doesn't clash.
@@ -46,12 +48,14 @@ class FakeStore:
     def __init__(self, past=(), broken=False):
         self.past_rows, self.broken, self.saved = list(past), broken, []
 
-    def past(self, user_id, ts):
+    def past(self, user_id, ts, timeout=None):
         if self.broken:
             raise RuntimeError("Cassandra down")
         return self.past_rows
 
-    def save(self, txn):
+    def save(self, txn, timeout=None):
+        if self.broken:
+            raise RuntimeError("Cassandra down")
         self.saved.append(txn["txn_id"])
 
 
@@ -71,7 +75,7 @@ def current_model():
 
 
 def use_store(store):
-    scoring.app.state.store = store
+    scoring.app.state.store = GuardedStore(store)
     return store
 
 
@@ -178,4 +182,12 @@ def test_explain_failure_keeps_the_decision(client):
 def test_cassandra_down_still_scores(client):
     use_store(FakeStore(broken=True))
     r = client.post("/score", json=req(KNOWN))
-    assert r.status_code == 200 and r.json()["cold_start"] is True
+    assert r.status_code == 200 and r.json()["degraded"] is True
+    assert r.json()["cold_start"] is False    # we don't know that the user is new
+    assert current_model().seen_history is None
+
+
+def test_normal_payment_is_not_degraded(client):
+    use_store(FakeStore())
+    assert client.post("/score", json=req(KNOWN)).json()["degraded"] is False
+    assert client.post("/score", json=req(UNKNOWN)).json()["degraded"] is False

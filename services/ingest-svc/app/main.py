@@ -96,6 +96,7 @@ class Decision(BaseModel):
     model_version: str
     reasons: list[str] = []  # up to 3 model reasons; empty when approved
     cold_start: bool = False  # true: no trusted history for this user (unknown or new)
+    degraded: bool = False    # true: scored without history because Cassandra didn't answer
 
 
 def now():

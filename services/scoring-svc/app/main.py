@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from features.history import NOVELTY_OF, history_for_one
 from ml.model import FILES, FraudModel
 from registry.live_model import LiveModel, follow_promotions
+from store.guarded import GuardedStore, HistoryUnavailable
 from store.history import HistoryStore, is_known, to_datetime
 
 MODEL_DIR = Path(os.getenv("MODEL_DIR", "models/fraud-lgbm-v1"))
@@ -83,17 +84,18 @@ def load_model():
 
 
 def history_for(store, req):
-    """(history features, cold_start). None = no trusted history: the model sees missing values."""
+    """(history features, cold_start, degraded). None = no trusted history: the model sees
+    missing values. cold_start: the user has no history. degraded: we couldn't get it.
+    """
     if not is_known(req.user_id):
-        return None, True
+        return None, True, False
     try:
         past = store.past(req.user_id, req.ts)
-    except Exception:   # Cassandra down: score without history rather than fail the payment
-        log.exception("history read failed for %s; scoring as cold start", req.txn_id)
-        return None, True
+    except HistoryUnavailable:   # score without history rather than fail or delay the payment
+        return None, False, True
     values = {c: req.attrs.get(c) for c in NOVELTY_OF}
     features = history_for_one(past, to_datetime(req.ts).timestamp(), req.amount, values)
-    return features, not past
+    return features, not past, False
 
 
 def reasons_for(model, decision, request, history):
@@ -125,7 +127,7 @@ async def connect_store(attempts=30):
 @asynccontextmanager
 async def lifespan(app):
     model, version = load_model()
-    app.state.store = await connect_store()
+    app.state.store = GuardedStore(await connect_store())
     follower = None
     if PROMOTION_KEY.is_file():
         app.state.live = LiveModel(model, version, PROMOTION_KEY.read_text(), FraudModel.load)
@@ -167,7 +169,7 @@ def score(req: ScoreRequest):
     model, version = app.state.live.current
     store, request = app.state.store, req.model_dump()
     start = time.perf_counter()
-    history, cold_start = history_for(store, req)
+    history, cold_start, degraded = history_for(store, req)
     read = time.perf_counter()
     prob = model.predict_one(request, history)
     decision = model.decide(prob)
@@ -177,12 +179,13 @@ def score(req: ScoreRequest):
     if is_known(req.user_id):
         try:
             store.save(request)   # before answering: the user's next payment needs it
-        except Exception:
-            log.exception("history write failed for %s", req.txn_id)
+        except HistoryUnavailable:
+            pass   # counted by the store; the payment is still safe in txn.raw
     done = time.perf_counter()
     if (done - start) * 1000 >= SLOW_MS:
         log.warning("slow %s: read %.0f ms, predict %.0f ms, reasons %.0f ms, write %.0f ms",
                     req.txn_id, (read - start) * 1000, (predicted - read) * 1000,
                     (explained - predicted) * 1000, (done - explained) * 1000)
     return {"txn_id": req.txn_id, "score": prob, "decision": decision,
-            "model_version": version, "reasons": reasons, "cold_start": cold_start}
+            "model_version": version, "reasons": reasons, "cold_start": cold_start,
+            "degraded": degraded}

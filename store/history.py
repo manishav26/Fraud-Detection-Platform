@@ -56,6 +56,11 @@ def to_past(rows):
              **{col: r[cass] for col, cass in COLUMNS.items()}} for r in rows]
 
 
+def _timeout(seconds):
+    # Only when set: passing timeout=None to the driver would mean "wait forever"
+    return {} if seconds is None else {"timeout": seconds}
+
+
 class HistoryStore:
     def __init__(self, hosts=None, keyspace="fraud", consistency=None):
         hosts = hosts or os.getenv("CASSANDRA_HOSTS", "localhost").split(",")
@@ -73,11 +78,13 @@ class HistoryStore:
         self.insert = self.session.prepare(INSERT)
         self.select = self.session.prepare(SELECT)
 
-    def save(self, txn):
-        self.session.execute(self.insert, row_values(txn))
+    def save(self, txn, timeout=None):
+        """timeout in seconds; None = the driver's default."""
+        self.session.execute(self.insert, row_values(txn), **_timeout(timeout))
 
-    def past(self, user_id, ts):
-        return to_past(self.session.execute(self.select, (user_id, to_datetime(ts))))
+    def past(self, user_id, ts, timeout=None):
+        return to_past(self.session.execute(self.select, (user_id, to_datetime(ts)),
+                                            **_timeout(timeout)))
 
     def close(self):
         self.cluster.shutdown()

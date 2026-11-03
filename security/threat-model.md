@@ -12,7 +12,7 @@ defined in the plan; each needs a pass number saved in docs/results/security.md.
 | 4 | A compromised pod reaches the databases | cluster | Attacker who owns one pod | Default-deny NetworkPolicy, one allow rule per path, separate service accounts, least-privilege DB users | ST4 |
 | 5 | Malformed or malicious input | ingest, scoring | Malicious client | Strict Pydantic schemas, size limits, prepared CQL and parameterized SQL, bad messages to dlq.txn | ST5, ST6 |
 | 6 | Replay of a captured request | ingest | Outsider replaying a captured request | 5 min timestamp window; txn_id is the idempotency key | ST12 |
-| 7 | Flooding or one noisy client | gateway, scoring | Abusive or compromised client | Per-client rate limit, pod resource limits, HPA, timeouts, circuit breaker toward Cassandra | ST7 |
+| 7 | Flooding or one noisy client | gateway, scoring | Abusive or compromised client | Per-client rate limit, pod resource limits, HPA, timeouts, circuit breaker toward Cassandra (`store/guarded.py`). Accepted risk: while Cassandra is failing, payments are scored without history signals (`degraded=true`) | ST7 |
 | 8 | Personal data leaks through storage or logs | data, logs | Anyone with read access to storage or logs | HMAC-SHA256 pseudonyms for user and card ids, log scrubbing, encrypted volumes | ST11 |
 | 9 | Someone denies or hides a change | audit | Insider hiding an action | Append-only audit table, each row hashes the previous row | ST8 |
 | 10 | Poisoned labels or training data | feedback path | Attacker feeding bad labels | Only the label service identity writes labels, batch sanity checks, shadow mode, promotion gate, frozen golden set | ST13 |

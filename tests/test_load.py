@@ -66,13 +66,14 @@ def test_sender_retries_503_and_refreshes_expired_token(tmp_path, monkeypatch):
             return httpx.Response(503, json={"detail": "retry"})
         return httpx.Response(200, json={"txn_id": "x", "score": 0.1, "decision": "approve",
                                          "model_version": "stub-0", "reasons": [],
-                                         "cold_start": True})
+                                         "cold_start": True, "degraded": True})
 
     sched = list(synthetic.schedule(rps=100, seconds=0.01, users=1, seed=1))
     stats, _ = asyncio.run(sender.run(sched, "http://test", keep_rows=True,
                                       transport=httpx.MockTransport(gateway)))
     assert stats.status == {200: 1} and stats.retries == 1 and calls["token"] == 2
     assert stats.cold_starts == 1 and "Cold starts: 1" in stats.summary(1.0)
+    assert stats.degraded == 1 and "without history): 1" in stats.summary(1.0)
     out = tmp_path / "results.csv"
     sender.write_csv(stats.rows, out)
     rows = list(csv.DictReader(out.open()))

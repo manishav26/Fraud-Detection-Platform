@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed backfill replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-st9-tamper k8s-mlflow
+.PHONY: keys up down test lint logs topics schema mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow
 keys:
 	./scripts/gen_keys.sh
 
@@ -43,6 +43,10 @@ cassandra-speed:
 # Load days 1-109 into Cassandra, so users have their real history (needs `make schema`)
 backfill:
 	python -m store.backfill
+
+# How long history reads take, including for the largest users (needs `make backfill`)
+read-timing:
+	python -m store.read_timing
 
 # Replay real payments through the gateway (needs data/processed/stream.parquet). Docs: docs/load.md
 # URL=http://localhost:8080 sends to the k3d cluster instead of compose.
@@ -98,6 +102,9 @@ k8s-promote:
 # Load days 1-109 into the cluster's Cassandra, through a tunnel
 k8s-backfill:
 	./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.backfill
+
+k8s-read-timing:
+	./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.read_timing
 
 # ST9 attack on the cluster: change a registered model's file behind MLflow's back
 k8s-st9-tamper:

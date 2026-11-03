@@ -35,8 +35,21 @@ ingest-svc -> POST /score
   its decision, with an empty list.
 - **Save before answering:** the user's next payment must see this one. The replay sends one
   request per user at a time, so the next one starts only after this answer.
-- **Cassandra down:** the payment is still scored, as cold start, and the error is logged.
-  Better a slightly weaker score than no answer.
+- **Cassandra slow or down:** the payment is still scored, without history, with `degraded=true`.
+  Better a slightly weaker score than no answer or a late one (`store/guarded.py`):
+  - **Time limits:** reads 150 ms, writes 500 ms, set in `deploy/scoring.env` from measurements
+    (`docs/results/safe_reads.md`). Writes get longer because a skipped write leaves a gap in history,
+    while a write that times out may still land, and writing it again is safe.
+  - **Circuit breaker:** after 5 failures in a row, calls stop for 5 s, so payments don't each wait
+    out the limit. Then one trial call goes through. Each pod has its own breaker.
+  - **`degraded` is separate from `cold_start`:** "we couldn't get the history" isn't "this user is
+    new". The log gets one line when the breaker opens and one when it closes, not one per payment.
+  - **The model still decides.** Sending every degraded payment to review would flood analysts
+    during an outage. The accepted risk: overloading Cassandra removes "too many payments this
+    hour" signals, which may help a fraud burst (threat 7). A metric will show degraded payments.
+  - **Skipped writes are gaps** in that user's history. A write that fails is logged with its
+    `txn_id` (`skipped history write for ...`). While the breaker is open writes are only counted,
+    and the total is logged when Cassandra returns. The payments are still in `txn.raw`, so a repair tool could fill them; not built for now.
 - **Plain `def` endpoint:** the Cassandra driver and the model are blocking calls; FastAPI runs a
   plain `def` in a worker thread so other requests keep moving.
 
