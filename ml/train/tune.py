@@ -104,6 +104,9 @@ def main():
                 "not used. Trial 0 is the untuned v1 setting. Seed 42, fixed threads, "
                 "deterministic mode.\n\n")
         f.write(f"## Decision\n\n{verdict}\n\nChosen settings (ml/configs/lgbm.yaml):\n\n")
+        f.write(f"Only trials with at most {MAX_SIZE:,} trees x leaves were eligible, so "
+        "TreeSHAP reasons fit the 10 ms budget: trial 12 (1,200 x 256) was the most "
+        "accurate but took 68 ms per payment.\n\n")
         f.write("```yaml\n" + yaml.safe_dump(chosen, sort_keys=False) + "```\n\n")
         f.write("## All trials (best first)\n\n")
         f.write(show.to_markdown(index=False) + "\n")
