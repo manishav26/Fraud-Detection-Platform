@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint logs topics schema db-schema st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow
+.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow
 keys:
 	./scripts/gen_keys.sh
 
@@ -41,6 +41,16 @@ db-schema:
 # Recompute the audit log's hash chain; names the first broken row (ST8)
 verify-audit:
 	python -m audit.verify
+
+# ST1: 1,000 payments with bad tokens; all refused, none reach ingest (run with no other traffic)
+st1:
+	python security/tests/st1_tokens.py --url $(URL)
+
+k8s-st1:
+	python security/tests/st1_tokens.py --url http://localhost:8080 --rpk "kubectl -n fraud exec -i redpanda-0 -- rpk"
+
+k8s-st2:
+	python security/tests/st2_roles.py --url http://localhost:8080
 
 # ST2: every role calls every route and is checked against the roles table (docs/access.md)
 st2:

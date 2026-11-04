@@ -54,6 +54,16 @@ plain SHA-256 is enough. Slow hashing (bcrypt, scrypt) is for passwords people c
    any such header a client sends, so it can't be faked through the gateway. This second check
    matters until week 4's NetworkPolicies stop anyone reaching alert-svc without Kong.
 
+## Bad tokens (threat 1, ST1)
+
+`make st1` sends 1,000 payments with six kinds of bad token: forged (another key), expired (real
+key, an hour old), altered (role changed to admin), `alg: none`, algorithm confusion (HMAC with the
+public key as the secret) and unknown client (real key, made-up `iss`). All must be refused, and
+`txn.raw`'s message count must not change, which shows none reached ingest.
+
+Kong checks the signature with the client's public key and RS256 only, so a token can't choose a
+weaker algorithm, and it refuses an `iss` that isn't a known client.
+
 ## Rate and size limits (threat 7, ST7)
 
 | Route | Rate limit | Body limit |
