@@ -1,4 +1,8 @@
 _format_version: "3.0"
+# Who may call what: the roles table in docs/access.md. On each route, `jwt` checks the token
+# and finds the client, then `acl` lets only the listed groups (roles) through; others get 403
+# here, before any service sees the request.
+
 # One consumer per client in deploy/clients.json, written in by scripts/gen_keys.sh
 consumers:
 @@CONSUMERS@@
@@ -12,15 +16,31 @@ services:
         plugins:
           - name: jwt
             config: { claims_to_verify: [exp] }
+          - name: acl
+            config: { allow: [client] }
   - name: alerts
     url: http://alert-svc:8000
     routes:
-      - name: cases
-        paths: ["/cases"]   # list, read and resolve; /stats stays internal
+      # Two routes, because reading and resolving allow different roles. Any other method or
+      # path under /cases matches neither and gets 404. /stats isn't routed at all.
+      - name: cases-read
+        methods: [GET]
+        paths: ["/cases"]
         strip_path: false
         plugins:
           - name: jwt
             config: { claims_to_verify: [exp] }
+          - name: acl
+            config: { allow: [analyst, admin] }
+      - name: cases-resolve
+        methods: [POST]
+        paths: ["~/cases/[0-9]+/resolve$"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config: { claims_to_verify: [exp] }
+          - name: acl
+            config: { allow: [analyst] }
   - name: token
     url: http://token-issuer:8000
     routes:

@@ -64,6 +64,16 @@ async def open_case(conn, msg):
 
 # ---------- for analysts (routes in main.py) ----------
 
+READ_ROLES = {"analyst", "admin"}   # the same as Kong's rules (deploy/kong/kong.tpl.yml)
+RESOLVE_ROLES = {"analyst"}
+
+
+def has_role(groups_header, allowed):
+    """Second check after Kong's: the client's role, from the X-Consumer-Groups header Kong adds."""
+    groups = {g.strip() for g in (groups_header or "").split(",") if g.strip()}
+    return bool(groups & allowed)
+
+
 COLUMNS = ("case_id, txn_id, user_id, amount, payment_ts, score, decision, reasons, model_version,"
            " degraded, opened_at, status, resolved_by, resolved_at, note")
 OUTCOMES = ("fraud", "not_fraud")

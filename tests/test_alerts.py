@@ -39,6 +39,20 @@ def test_unreadable_message_is_none(bad):
     assert cases.parse(bad) is None
 
 
+@pytest.mark.parametrize("header, allowed, ok", [
+    ("analyst", cases.RESOLVE_ROLES, True),
+    ("admin", cases.READ_ROLES, True),
+    ("admin", cases.RESOLVE_ROLES, False),      # admin reads cases but doesn't resolve them
+    ("client", cases.READ_ROLES, False),
+    ("client, analyst", cases.RESOLVE_ROLES, True),
+    ("", cases.READ_ROLES, False),
+    (None, cases.READ_ROLES, False),            # no header: didn't come through Kong
+    ("analysts", cases.READ_ROLES, False),      # a near-miss name isn't a role
+])
+def test_role_check_matches_the_roles_table(header, allowed, ok):
+    assert cases.has_role(header, allowed) is ok
+
+
 def test_approved_payment_opens_nothing():
     assert asyncio.run(cases.open_case(None, cases.parse(message("approve")))) is None
 

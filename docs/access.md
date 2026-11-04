@@ -37,11 +37,23 @@ plain SHA-256 is enough. Slow hashing (bcrypt, scrypt) is for passwords people c
 | `ana`, `ben` | analyst | working on cases |
 | `admin` | admin | reading cases; promoting models still needs the signing key on the laptop |
 
-## Roles table (ST2): enforced from the next commit
+## Roles table (ST2)
 
-| Route | client | analyst | admin |
-|---|---|---|---|
-| `POST /v1/transactions/score` | yes | 403 | 403 |
-| `GET /cases`, `GET /cases/{id}` | 403 | yes | yes |
-| `POST /cases/{id}/resolve` | 403 | yes | 403 |
-| `POST /token` | needs a client id and secret | | |
+| Route | client | analyst | admin | no token |
+|---|---|---|---|---|
+| `POST /v1/transactions/score` | yes | 403 | 403 | 401 |
+| `GET /cases`, `GET /cases/{id}` | 403 | yes | yes | 401 |
+| `POST /cases/{id}/resolve` | 403 | yes | 403 | 401 |
+| `POST /token` | needs a client id and secret | | | |
+
+**Enforced twice:**
+1. **Kong** (`deploy/kong/kong.tpl.yml`): on each route, `jwt` checks the token and finds the client,
+   then `acl` lets only the listed roles through. The case routes are split into a GET route and a
+   POST route, because reading and resolving allow different roles. Forbidden requests stop here.
+2. **alert-svc** checks the role again, from the `X-Consumer-Groups` header Kong adds. Kong replaces
+   any such header a client sends, so it can't be faked through the gateway. This second check
+   matters until week 4's NetworkPolicies stop anyone reaching alert-svc without Kong.
+
+**Test:** `make st2` calls every route as every role and as no one. For the case routes it uses a case
+id that doesn't exist: allowed roles get past both checks and get 404, forbidden ones get 403 from
+Kong. So it checks access without resolving a real case, and can run any time.

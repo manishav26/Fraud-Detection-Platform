@@ -18,7 +18,17 @@ from aiokafka import AIOKafkaConsumer
 from fastapi import FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from app.cases import AlreadyResolved, get_case, list_cases, open_case, parse, resolve_case
+from app.cases import (
+    READ_ROLES,
+    RESOLVE_ROLES,
+    AlreadyResolved,
+    get_case,
+    has_role,
+    list_cases,
+    open_case,
+    parse,
+    resolve_case,
+)
 
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 DSN = os.getenv("ALERTS_DSN", "postgresql://alerts:alerts_dev_only@localhost:5432/fraud")
@@ -96,14 +106,16 @@ def connect():
     return psycopg.AsyncConnection.connect(DSN, autocommit=True)
 
 
-def analyst(request):
-    """Who is acting, as Kong reports it after checking the token. Kong sets this header itself,
-    replacing any a client sends. A request without it didn't come through Kong: refused.
-    For now every token belongs to one dev client; step 6 gives each analyst their own.
+def analyst(request, allowed):
+    """Who is acting, and may they? Kong sets both headers after checking the token and the role,
+    replacing any a client sends. Checked again here, so a request that somehow skipped Kong's
+    rules is still refused (NetworkPolicies, week 4, stop anyone bypassing Kong at all).
     """
     actor = request.headers.get("x-consumer-username")
     if not actor:
         raise HTTPException(403, "case routes must be called through the gateway")
+    if not has_role(request.headers.get("x-consumer-groups"), allowed):
+        raise HTTPException(403, "your role may not do this")
     return actor
 
 
@@ -115,14 +127,14 @@ class Resolution(BaseModel):
 @app.get("/cases")
 async def cases(request: Request, status: Literal["open", "fraud", "not_fraud"] = "open",
                 limit: int = Query(default=50, ge=1, le=200)):
-    analyst(request)
+    analyst(request, READ_ROLES)
     async with await connect() as conn:
         return await list_cases(conn, status, limit)
 
 
 @app.get("/cases/{case_id}")
 async def one_case(request: Request, case_id: int):
-    analyst(request)
+    analyst(request, READ_ROLES)
     async with await connect() as conn:
         case = await get_case(conn, case_id)
     if case is None:
@@ -132,7 +144,7 @@ async def one_case(request: Request, case_id: int):
 
 @app.post("/cases/{case_id}/resolve")
 async def resolve(request: Request, case_id: int, body: Resolution):
-    actor = analyst(request)
+    actor = analyst(request, RESOLVE_ROLES)
     async with await connect() as conn:
         try:
             case = await resolve_case(conn, case_id, body.outcome, body.note, actor)
