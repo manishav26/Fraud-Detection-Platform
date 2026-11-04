@@ -1,6 +1,7 @@
 # Kustomize base: the whole scoring path on Kubernetes (week 2, step 6). Docs: docs/k8s.md
 # Applied by `make k8s-up`, which first creates the secret and config maps listed below.
 #   secret     jwt-private-key  keys/private.pem        (token-issuer)
+#   secret     issuer-clients   keys/clients.issuer.json  (token-issuer: hashed client secrets)
 #   configmap  kong-config      deploy/kong/kong.yml    (kong)
 #   configmap  scoring-config   deploy/scoring.env      (scoring-svc, includes the model pins)
 #   configmap  promotion-public-key  promotion-keys/public.pem  (scoring-svc checks promotions)

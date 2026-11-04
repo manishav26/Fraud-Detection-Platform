@@ -15,21 +15,23 @@ from collections import Counter, defaultdict
 import httpx
 import numpy as np
 
+from load.credentials import LOAD_CLIENT, credentials
+
 SCORE_PATH = "/v1/transactions/score"
 RETRIES = 3     # for 503 "could not record", with the same txn_id
 BACKOFF = 0.5   # seconds before the first retry, doubled each time
 
 
 class Token:
-    """Gets a JWT from the dev token issuer and gets a new one when the old one expires."""
+    """Gets a JWT for one client, and a new one when it expires (every 15 minutes)."""
 
-    def __init__(self, client):
-        self.client, self.value, self.lock = client, None, asyncio.Lock()
+    def __init__(self, client, creds):
+        self.client, self.creds, self.value, self.lock = client, creds, None, asyncio.Lock()
 
     async def refresh(self, old=None):
         async with self.lock:
             if self.value == old:   # nobody refreshed it while we waited
-                r = await self.client.post("/token")
+                r = await self.client.post("/token", json=self.creds)
                 r.raise_for_status()
                 self.value = r.json()["access_token"]
         return self.value
@@ -91,11 +93,13 @@ def write_csv(rows, path):
         csv.writer(f).writerows([CSV_HEADER, *rows])
 
 
-async def run(schedule, url, concurrency=32, keep_rows=False, transport=None):
+async def run(schedule, url, concurrency=32, keep_rows=False, transport=None, creds=None):
     """Returns (stats, wall seconds). keep_rows: one row per payment in stats.rows, for a CSV.
 
+    creds: the client to send as; default the load-test client from keys/clients.json.
     transport: only for tests (a fake gateway).
     """
+    creds = creds or credentials(LOAD_CLIENT)
     stats = Stats()
     in_flight = asyncio.Semaphore(concurrency)
     # One request per user at a time, so a user's payments arrive in the order they happened.
@@ -121,7 +125,7 @@ async def run(schedule, url, concurrency=32, keep_rows=False, transport=None):
     limits = httpx.Limits(max_connections=concurrency)
     async with httpx.AsyncClient(base_url=url, timeout=30, limits=limits,
                                  transport=transport) as client:
-        token = Token(client)
+        token = Token(client, creds)
         await token.refresh()
         tasks = set()
         start = time.perf_counter()

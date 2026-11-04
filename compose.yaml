@@ -70,8 +70,11 @@ services:
   token-issuer:
     build: ./services/token-issuer
     image: fraud/token-issuer:dev   # same name in deploy/k8s
-    volumes: ["./keys:/keys:ro"]
-    environment: { PRIVATE_KEY_PATH: /keys/private.pem }
+    # Two files only: its signing key and the clients' hashed secrets, not the plain secrets
+    volumes:
+      - ./keys/private.pem:/keys/private.pem:ro
+      - ./keys/clients.issuer.json:/clients/clients.issuer.json:ro
+    environment: { PRIVATE_KEY_PATH: /keys/private.pem, CLIENTS_PATH: /clients/clients.issuer.json }
   scoring-svc:
     build: { context: ., dockerfile: services/scoring-svc/Dockerfile }
     image: fraud/scoring-svc:dev

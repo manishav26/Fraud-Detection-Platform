@@ -1,11 +1,7 @@
 _format_version: "3.0"
+# One consumer per client in deploy/clients.json, written in by scripts/gen_keys.sh
 consumers:
-  - username: dev-client
-    jwt_secrets:
-      - key: fraud-platform-issuer
-        algorithm: RS256
-        rsa_public_key: |
-@@PUBLIC_KEY@@
+@@CONSUMERS@@
 services:
   - name: ingest
     url: http://ingest-svc:8000

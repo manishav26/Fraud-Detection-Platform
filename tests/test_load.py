@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import json
 import math
 
 import httpx
@@ -9,6 +10,8 @@ from app.main import Transaction  # ingest-svc: the contract the gateway enforce
 from features.proxy_id import add_proxy_id
 from features.request_time import hour_of_day
 from load import replay, sender, synthetic
+
+CREDS = {"client_id": "load-test", "client_secret": "s3cret"}
 
 
 def stream_rows():
@@ -57,6 +60,7 @@ def test_sender_retries_503_and_refreshes_expired_token(tmp_path, monkeypatch):
 
     def gateway(request):                      # fake Kong + services
         if request.url.path == "/token":
+            assert json.loads(request.content) == CREDS   # logs in as the client it was given
             calls["token"] += 1
             return httpx.Response(200, json={"access_token": f"tok{calls['token']}"})
         calls["score"] += 1
@@ -70,7 +74,7 @@ def test_sender_retries_503_and_refreshes_expired_token(tmp_path, monkeypatch):
 
     sched = list(synthetic.schedule(rps=100, seconds=0.01, users=1, seed=1))
     stats, _ = asyncio.run(sender.run(sched, "http://test", keep_rows=True,
-                                      transport=httpx.MockTransport(gateway)))
+                                      transport=httpx.MockTransport(gateway), creds=CREDS))
     assert stats.status == {200: 1} and stats.retries == 1 and calls["token"] == 2
     assert stats.cold_starts == 1 and "Cold starts: 1" in stats.summary(1.0)
     assert stats.degraded == 1 and "without history): 1" in stats.summary(1.0)

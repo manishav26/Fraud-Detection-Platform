@@ -16,10 +16,12 @@ spec:
           imagePullPolicy: Never   # imported into k3d by `make k8s-up`, never pulled
           env:
             - {name: PRIVATE_KEY_PATH, value: /keys/private.pem}
+            - {name: CLIENTS_PATH, value: /clients/clients.issuer.json}
           ports:
             - {name: http, containerPort: 8000}
           volumeMounts:
             - {name: keys, mountPath: /keys, readOnly: true}
+            - {name: clients, mountPath: /clients, readOnly: true}   # hashed secrets only
           readinessProbe:
             tcpSocket: {port: 8000}
           securityContext:
@@ -31,6 +33,8 @@ spec:
       volumes:
         - name: keys
           secret: {secretName: jwt-private-key}
+        - name: clients
+          secret: {secretName: issuer-clients}
 ---
 apiVersion: v1
 kind: Service

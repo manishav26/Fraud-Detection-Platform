@@ -5,6 +5,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 NS=fraud
+# Compose and the cluster together run this laptop out of memory and stall Docker
+if [ -n "$(docker compose ps -q 2>/dev/null)" ]; then
+  echo "Compose is running. Stop it first: make down" >&2
+  exit 1
+fi
 IMAGES=(fraud/token-issuer:dev fraud/ingest-svc:dev fraud/scoring-svc:dev fraud/mlflow:dev
         fraud/alert-svc:dev)
 PUBLIC=(kong:3.7 redpandadata/redpanda:v24.2.7 cassandra:4.1 postgres:16 rustfs/rustfs:latest)
@@ -28,6 +33,8 @@ apply() { kubectl apply -f -; }
 kubectl create namespace "$NS" --dry-run=client -o yaml | apply
 kubectl -n "$NS" create secret generic jwt-private-key \
   --from-file=private.pem=keys/private.pem --dry-run=client -o yaml | apply
+kubectl -n "$NS" create secret generic issuer-clients \
+  --from-file=clients.issuer.json=keys/clients.issuer.json --dry-run=client -o yaml | apply
 kubectl -n "$NS" create configmap kong-config \
   --from-file=kong.yml=deploy/kong/kong.yml --dry-run=client -o yaml | apply
 kubectl -n "$NS" create configmap scoring-config \

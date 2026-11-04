@@ -1,10 +1,18 @@
-.PHONY: keys up down test lint logs topics schema db-schema verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow
+.PHONY: keys token up down test lint logs topics schema db-schema verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow
 keys:
 	./scripts/gen_keys.sh
+
+# Print a token for one client:  TOKEN=$$(make -s token CLIENT=ana)   (docs/access.md)
+CLIENT ?= merchant-1
+token:
+	@python -m load.credentials $(CLIENT) --url $(URL)
 
 # Also creates topics and tables: compose's Cassandra keeps nothing across `make down`, and a
 # missing keyspace stops scoring from starting. All three steps are safe to repeat.
 up: keys
+	@# Compose and the k3d cluster together run this laptop out of memory and stall Docker
+	@if k3d cluster list fraud 2>/dev/null | grep -q " 1/1 "; then \
+		echo "The k3d cluster is running. Stop it first: k3d cluster stop fraud"; exit 1; fi
 	docker compose up -d --build
 	@# Kong reads kong.yml only when it starts, and compose doesn't restart it when the file changes
 	docker compose restart kong
