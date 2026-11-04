@@ -4,8 +4,8 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 
 | ID | Test | Result | Evidence |
 |----|------|--------|----------|
-| ST1 | Forged, expired, altered and `alg: none` tokens | pending (week 3, step 6) | |
-| ST2 | Each role calls every route | **pass**: all 16 calls match the roles table | below; `make st2` |
+| ST1 | Forged, expired, altered and `alg: none` tokens | **pass**: 1,000 of 1,000 got 401, none reached ingest (cluster) | below; `make k8s-st1` |
+| ST2 | Each role calls every route | **pass**: all 16 calls match the roles table, compose and cluster | below; `make st2` |
 | ST3 | Pod outside the mesh calls scoring directly | pending (week 4) | |
 | ST4 | ingest tries to reach Postgres | pending (week 4) | |
 | ST5 | Schemathesis fuzzing | pending (week 5) | |
@@ -19,7 +19,22 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 | ST13 | Label writes by the wrong service account | pending (week 5) | |
 | ST14 | Forced drift alarms | pending (week 5, with Manisha) | |
 
-## ST2: roles (compose, 4 Nov)
+## ST1: bad tokens (k3d cluster, 4 Nov)
+
+Each payment carried a bad token; `txn.raw` was counted before and after.
+
+| Bad token | Sent | Answers |
+|---|---:|---|
+| forged (another private key) | 167 | 401 x 167 |
+| expired (real key, an hour old) | 167 | 401 x 167 |
+| altered (role changed to admin) | 167 | 401 x 167 |
+| `alg: none` | 167 | 401 x 167 |
+| algorithm confusion (HMAC with the public key) | 166 | 401 x 166 |
+| unknown client (real key, made-up `iss`) | 166 | 401 x 166 |
+
+All 1,000 refused with 401. `txn.raw`: 31,723 messages before and after, so none reached ingest.
+
+## ST2: roles (compose and cluster, 4 Nov; identical)
 
 | Route | no token | client | analyst | admin |
 |---|---|---|---|---|
