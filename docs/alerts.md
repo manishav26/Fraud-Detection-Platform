@@ -6,9 +6,9 @@ analyst -> Kong -> alert-svc: list, read, resolve a case -> audit row
 make verify-audit -> recomputes the chain -> names the first broken row (ST8)
 ```
 
-Done so far: ingest publishes to `txn.scored` (commit 1); the tables, audit chain and
-`verify_audit` (commit 2); alert-svc opening cases (commit 3); analyst routes (commit 4).
-alert-svc on Kubernetes comes next.
+All five parts are done: ingest publishes to `txn.scored`; the tables, audit chain and
+`verify_audit`; alert-svc opening cases; analyst routes; and alert-svc on Kubernetes, with 2 copies
+sharing the work (`deploy/k8s/base/alert-svc.yaml`).
 
 ## Analyst routes (through Kong, with a token)
 

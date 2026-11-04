@@ -1,4 +1,4 @@
-.PHONY: keys up down test lint logs topics schema db-schema verify-audit k8s-verify-audit st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow
+.PHONY: keys up down test lint logs topics schema db-schema verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow
 keys:
 	./scripts/gen_keys.sh
 
@@ -131,6 +131,22 @@ k8s-backfill:
 
 k8s-verify-audit:
 	./scripts/k8s_tunnel.sh service/postgres=5432:5432 -- python -m audit.verify
+
+k8s-st8-tamper:
+	kubectl -n fraud exec -i postgres-0 -- psql -U fraud -d fraud -v ON_ERROR_STOP=1 -v row=$(ROW) -v actor=attacker < security/tests/st8_tamper_audit.sql
+
+k8s-st8-restore:
+	kubectl -n fraud exec -i postgres-0 -- psql -U fraud -d fraud -v ON_ERROR_STOP=1 -v row=$(ROW) -v actor=alert-svc < security/tests/st8_tamper_audit.sql
+
+# Counts from each alert-svc pod: each handles its own share of txn.scored's partitions
+k8s-alert-stats:
+	@for p in $$(kubectl -n fraud get pods -l app=alert-svc -o name); do \
+		echo "$$p $$(kubectl -n fraud exec $$p -- python -c "import urllib.request as u; print(u.urlopen('http://localhost:8000/stats').read().decode())")"; \
+	done
+
+# Cases in the cluster's Postgres, by status and decision
+k8s-cases:
+	kubectl -n fraud exec postgres-0 -- psql -U fraud -d fraud -c "SELECT status, decision, count(*) FROM cases GROUP BY 1, 2 ORDER BY 1, 2"
 
 k8s-read-timing:
 	./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.read_timing
