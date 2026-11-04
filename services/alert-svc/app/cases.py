@@ -6,6 +6,7 @@ message delivered twice (at-least-once) opens one case and writes one audit row.
 
 import json
 
+from psycopg.rows import dict_row
 from pydantic import AwareDatetime, BaseModel, ValidationError
 
 from audit.chain import append_async
@@ -59,3 +60,50 @@ async def open_case(conn, msg):
             "txn_id": msg.txn_id, "decision": msg.decision, "score": msg.score,
             "model_version": msg.model_version, "degraded": msg.degraded})
     return case_id
+
+
+# ---------- for analysts (routes in main.py) ----------
+
+COLUMNS = ("case_id, txn_id, user_id, amount, payment_ts, score, decision, reasons, model_version,"
+           " degraded, opened_at, status, resolved_by, resolved_at, note")
+OUTCOMES = ("fraud", "not_fraud")
+
+
+class AlreadyResolved(Exception):
+    """A decision is never silently overwritten: changing one would need its own audited action."""
+
+
+async def list_cases(conn, status, limit):
+    cur = conn.cursor(row_factory=dict_row)
+    await cur.execute(f"SELECT {COLUMNS} FROM cases WHERE status = %s"
+                      " ORDER BY opened_at DESC, case_id DESC LIMIT %s", (status, limit))
+    return await cur.fetchall()
+
+
+async def get_case(conn, case_id):
+    cur = conn.cursor(row_factory=dict_row)
+    await cur.execute(f"SELECT {COLUMNS} FROM cases WHERE case_id = %s", (case_id,))
+    return await cur.fetchone()
+
+
+async def resolve_case(conn, case_id, outcome, note, actor):
+    """Close an open case. The change and its audit row are saved together, or neither.
+
+    Returns the updated case, or None if there is no such case; raises AlreadyResolved.
+    """
+    if outcome not in OUTCOMES:
+        raise ValueError(f"outcome must be one of {OUTCOMES}")
+    async with conn.transaction():
+        cur = conn.cursor(row_factory=dict_row)
+        # `status = 'open'` in the same statement: two analysts resolving at once can't both win
+        await cur.execute(f"UPDATE cases SET status = %s, resolved_by = %s, resolved_at = now(),"
+                          f" note = %s WHERE case_id = %s AND status = 'open' RETURNING {COLUMNS}",
+                          (outcome, actor, note, case_id))
+        case = await cur.fetchone()
+        if case is None:
+            if await get_case(conn, case_id) is None:
+                return None
+            raise AlreadyResolved(case_id)
+        await append_async(conn, actor, "case_resolved", f"case:{case_id}", {
+            "txn_id": case["txn_id"], "outcome": outcome, "note": note})
+    return case

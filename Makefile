@@ -6,6 +6,8 @@ keys:
 # missing keyspace stops scoring from starting. All three steps are safe to repeat.
 up: keys
 	docker compose up -d --build
+	@# Kong reads kong.yml only when it starts, and compose doesn't restart it when the file changes
+	docker compose restart kong
 	./scripts/create_topics.sh
 	./scripts/create_schema.sh
 	./scripts/create_db_schema.sh

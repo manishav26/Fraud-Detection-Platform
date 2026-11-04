@@ -3,19 +3,22 @@
 Reads txn.scored as the consumer group "alert-svc": copies of this service share the partitions,
 so each message is handled once. A message's position is saved only after its case is saved, so a
 crash means messages are read again, never lost; opening a case twice is harmless.
-Analyst routes come in week 3, step 5, commit 4.
+
+Analysts list, read and resolve cases through Kong (/cases), which checks their token first.
 """
 
 import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Literal
 
 import psycopg
 from aiokafka import AIOKafkaConsumer
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
-from app.cases import open_case, parse
+from app.cases import AlreadyResolved, get_case, list_cases, open_case, parse, resolve_case
 
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 DSN = os.getenv("ALERTS_DSN", "postgresql://alerts:alerts_dev_only@localhost:5432/fraud")
@@ -82,5 +85,59 @@ app = FastAPI(title="alert-svc", lifespan=lifespan)
 
 @app.get("/stats")
 def stats():
-    """Counts since start; a stand-in until the metrics in step 7."""
+    """Counts since start; a stand-in until the metrics in step 7. Not routed through Kong."""
     return counters
+
+
+# ---------- analyst routes, reached through Kong ----------
+
+def connect():
+    # One connection per request: analysts send a handful of requests, not hundreds per second
+    return psycopg.AsyncConnection.connect(DSN, autocommit=True)
+
+
+def analyst(request):
+    """Who is acting, as Kong reports it after checking the token. Kong sets this header itself,
+    replacing any a client sends. A request without it didn't come through Kong: refused.
+    For now every token belongs to one dev client; step 6 gives each analyst their own.
+    """
+    actor = request.headers.get("x-consumer-username")
+    if not actor:
+        raise HTTPException(403, "case routes must be called through the gateway")
+    return actor
+
+
+class Resolution(BaseModel):
+    outcome: Literal["fraud", "not_fraud"]
+    note: str = Field(default="", max_length=500)
+
+
+@app.get("/cases")
+async def cases(request: Request, status: Literal["open", "fraud", "not_fraud"] = "open",
+                limit: int = Query(default=50, ge=1, le=200)):
+    analyst(request)
+    async with await connect() as conn:
+        return await list_cases(conn, status, limit)
+
+
+@app.get("/cases/{case_id}")
+async def one_case(request: Request, case_id: int):
+    analyst(request)
+    async with await connect() as conn:
+        case = await get_case(conn, case_id)
+    if case is None:
+        raise HTTPException(404, "no such case")
+    return case
+
+
+@app.post("/cases/{case_id}/resolve")
+async def resolve(request: Request, case_id: int, body: Resolution):
+    actor = analyst(request)
+    async with await connect() as conn:
+        try:
+            case = await resolve_case(conn, case_id, body.outcome, body.note, actor)
+        except AlreadyResolved:
+            raise HTTPException(409, "case already resolved") from None
+    if case is None:
+        raise HTTPException(404, "no such case")
+    return case

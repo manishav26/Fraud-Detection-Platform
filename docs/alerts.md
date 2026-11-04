@@ -7,7 +7,26 @@ make verify-audit -> recomputes the chain -> names the first broken row (ST8)
 ```
 
 Done so far: ingest publishes to `txn.scored` (commit 1); the tables, audit chain and
-`verify_audit` (commit 2); alert-svc opening cases (commit 3). Analyst routes come next.
+`verify_audit` (commit 2); alert-svc opening cases (commit 3); analyst routes (commit 4).
+alert-svc on Kubernetes comes next.
+
+## Analyst routes (through Kong, with a token)
+
+| Route | Does |
+|---|---|
+| `GET /cases?status=open&limit=50` | Newest first; status `open`, `fraud` or `not_fraud`; up to 200 |
+| `GET /cases/{id}` | One case, 404 if none |
+| `POST /cases/{id}/resolve` | Body `{"outcome": "fraud" or "not_fraud", "note": "..."}`; 409 if already resolved |
+
+- **Resolving and its `case_resolved` audit row** are saved together, or neither.
+- **A decision is never silently overwritten:** the UPDATE only matches an `open` case, in one
+  statement, so two analysts resolving at once can't both win. The second gets 409.
+- **Who resolved it** comes from the `X-Consumer-Username` header that Kong sets after checking the
+  token, replacing any a client sends. A request without it didn't come through Kong and gets 403.
+  For now every token belongs to one dev client, so the name isn't a real person yet: step 6 gives
+  each analyst their own identity and role, and NetworkPolicies (week 4) stop anyone reaching
+  alert-svc without going through Kong.
+- `/stats` isn't routed through Kong.
 
 ## alert-svc (`services/alert-svc/`)
 
