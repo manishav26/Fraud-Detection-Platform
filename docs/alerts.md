@@ -26,7 +26,7 @@ sharing the work (`deploy/k8s/base/alert-svc.yaml`).
   For now every token belongs to one dev client, so the name isn't a real person yet: step 6 gives
   each analyst their own identity and role, and NetworkPolicies (week 4) stop anyone reaching
   alert-svc without going through Kong.
-- `/stats` isn't routed through Kong.
+- `/metrics` isn't routed through Kong.
 
 ## alert-svc (`services/alert-svc/`)
 
@@ -39,7 +39,7 @@ sharing the work (`deploy/k8s/base/alert-svc.yaml`).
 - **Unreadable message:** skipped, logged and counted. Retrying it would block every case behind it.
 - **Postgres or Redpanda down:** it starts over from the last saved position every 5 s.
 - **Its own login** (`alerts`), which can't change the audit log.
-- `GET /stats` (`make alert-stats`) shows counts until the metrics in step 7.
+- `make alert-stats` shows what happened to each message, from `/metrics` (`docs/metrics.md`).
 
 ## Tables (`deploy/postgres/platform.sql`, `make db-schema`)
 

@@ -67,9 +67,10 @@ st8-tamper:
 st8-restore:
 	docker compose exec -T postgres psql -U fraud -d fraud -v ON_ERROR_STOP=1 -v row=$(ROW) -v actor=alert-svc < security/tests/st8_tamper_audit.sql
 
-# Cases opened since alert-svc started (until the metrics in step 7)
+# What alert-svc did with each txn.scored message since it started, from its /metrics page
+ALERT_COUNTS = import urllib.request as u; print({l.split('\"')[1]: int(float(l.split()[-1])) for l in u.urlopen('http://localhost:8000/metrics').read().decode().splitlines() if l.startswith('alerts_messages_total{')})
 alert-stats:
-	docker compose exec -T alert-svc python -c "import urllib.request as u; print(u.urlopen('http://localhost:8000/stats').read().decode())"
+	@docker compose exec -T alert-svc python -c "$(ALERT_COUNTS)"
 
 # End-to-end check of the model registry (needs `make up`). Design: docs/mlflow.md
 mlflow-check:
@@ -167,7 +168,7 @@ k8s-st8-restore:
 # Counts from each alert-svc pod: each handles its own share of txn.scored's partitions
 k8s-alert-stats:
 	@for p in $$(kubectl -n fraud get pods -l app=alert-svc -o name); do \
-		echo "$$p $$(kubectl -n fraud exec $$p -- python -c "import urllib.request as u; print(u.urlopen('http://localhost:8000/stats').read().decode())")"; \
+		echo "$$p $$(kubectl -n fraud exec $$p -- python -c "$(ALERT_COUNTS)")"; \
 	done
 
 # Cases in the cluster's Postgres, by status and decision

@@ -23,10 +23,12 @@ from pathlib import Path
 
 import yaml
 from fastapi import FastAPI
+from prometheus_client import Counter, Histogram, Info
 from pydantic import BaseModel
 
 from features.history import NOVELTY_OF, history_for_one
 from ml.model import FILES, FraudModel
+from observability.http import BUCKETS, instrument
 from registry.live_model import LiveModel, follow_promotions
 from store.guarded import GuardedStore, HistoryUnavailable
 from store.history import HistoryStore, is_known, to_datetime
@@ -39,6 +41,12 @@ KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 CATCH_UP_SECONDS = 30   # at most this long at startup to learn which model is live
 SLOW_MS = 100           # log where the time went for requests slower than this
 log = logging.getLogger("scoring")
+
+# Where each payment's time goes, to find the slow step during slow periods (docs/metrics.md)
+STEP = Histogram("scoring_step_seconds", "Time per scoring step", ["step"], buckets=BUCKETS)
+DECISIONS = Counter("scoring_decisions_total", "Payments scored",
+                    ["decision", "cold_start", "degraded"])
+MODEL = Info("scoring_model", "The model answering right now")
 
 
 def sha256(path):
@@ -152,6 +160,16 @@ async def lifespan(app):
 app = FastAPI(title="scoring-svc", lifespan=lifespan)
 
 
+def _model_now():
+    # Read at each scrape, so the dashboard shows a promotion as soon as it happens
+    live = getattr(app.state, "live", None)
+    if live is not None:
+        MODEL.info({"version": live.current[1]})
+
+
+instrument(app, "scoring-svc", before_scrape=_model_now)
+
+
 class ScoreRequest(BaseModel):
     txn_id: str
     user_id: str
@@ -182,6 +200,14 @@ def score(req: ScoreRequest):
         except HistoryUnavailable:
             pass   # counted by the store; the payment is still safe in txn.raw
     done = time.perf_counter()
+    known = is_known(req.user_id)   # unknown users skip Cassandra: their 0 ms would hide slow reads
+    for step, seconds, applies in (("history_read", read - start, known),
+                                   ("predict", predicted - read, True),
+                                   ("reasons", explained - predicted, decision != "approve"),
+                                   ("history_write", done - explained, known)):
+        if applies:
+            STEP.labels(step).observe(seconds)
+    DECISIONS.labels(decision, str(cold_start).lower(), str(degraded).lower()).inc()
     if (done - start) * 1000 >= SLOW_MS:
         log.warning("slow %s: read %.0f ms, predict %.0f ms, reasons %.0f ms, write %.0f ms",
                     req.txn_id, (read - start) * 1000, (predicted - read) * 1000,

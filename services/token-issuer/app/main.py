@@ -15,11 +15,14 @@ import jwt
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from observability.http import instrument
+
 KEY_PATH = Path(os.getenv("PRIVATE_KEY_PATH", "/keys/private.pem"))
 CLIENTS_PATH = Path(os.getenv("CLIENTS_PATH", "/clients/clients.issuer.json"))
 TTL_SECONDS = 15 * 60   # threat model: short-lived tokens limit what a stolen one is worth
 
 app = FastAPI(title="token-issuer")
+instrument(app, "token-issuer")   # counts 401s too: a burst of them is someone guessing secrets
 KEY = KEY_PATH.read_text() if KEY_PATH.exists() else ""
 # client id -> {"role", "secret_sha256"}; the issuer never holds the secrets themselves
 CLIENTS = json.loads(CLIENTS_PATH.read_text()) if CLIENTS_PATH.exists() else {}

@@ -68,7 +68,7 @@ services:
       retries: 12
       start_period: 30s
   token-issuer:
-    build: ./services/token-issuer
+    build: { context: ., dockerfile: services/token-issuer/Dockerfile }
     image: fraud/token-issuer:dev   # same name in deploy/k8s
     # Two files only: its signing key and the clients' hashed secrets, not the plain secrets
     volumes:
@@ -85,7 +85,7 @@ services:
     depends_on: [cassandra, redpanda, mlflow]
     restart: on-failure   # e.g. Cassandra still starting: exit, Docker starts us again
   ingest-svc:
-    build: ./services/ingest-svc
+    build: { context: ., dockerfile: services/ingest-svc/Dockerfile }
     image: fraud/ingest-svc:dev
     environment: { SCORING_URL: "http://scoring-svc:8000", KAFKA_BOOTSTRAP: "redpanda:29092" }
     depends_on: [scoring-svc, redpanda]

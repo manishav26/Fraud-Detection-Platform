@@ -5,6 +5,7 @@ import pytest
 from aiokafka.errors import KafkaTimeoutError
 from app import main  # ingest-svc
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 
 GOOD = {"txn_id": "t1", "user_id": "u1", "amount": 10, "ts": "2026-10-19T10:00:00Z",
         "attrs": {"card1": 1234, "ProductCD": "W"}}
@@ -75,13 +76,35 @@ def test_decision_is_published_to_txn_scored_after_answering(client):
     assert "reasons" in value and "degraded" in value and value["scored_at"]
 
 
-def test_failed_scored_publish_still_answers_and_is_counted(client, monkeypatch):
-    monkeypatch.setitem(main.counters, "scored_publish_failures", 0)
+def failures():
+    return sample("ingest_scored_publish_failures_total")
+
+
+def test_failed_scored_publish_still_answers_and_is_counted(client):
+    before = failures()
     main.app.state.producer = FakeProducer(fail_topics={"txn.scored"})
     r = client.post("/v1/transactions/score", json=GOOD)
     assert r.status_code == 200 and r.json()["decision"] == "approve"
     run_background()
-    assert main.counters["scored_publish_failures"] == 1
+    assert failures() == before + 1
+
+
+def sample(name, **labels):
+    return REGISTRY.get_sample_value(name, labels) or 0
+
+
+def test_metrics_count_requests_and_steps(client):
+    request = {"service": "ingest-svc", "route": "/v1/transactions/score", "method": "POST",
+               "status": "200"}
+    before = sample("http_requests_total", **request)
+    steps = sample("ingest_step_seconds_count", step="publish_raw")
+    client.post("/v1/transactions/score", json=GOOD)
+    assert sample("http_requests_total", **request) == before + 1
+    assert sample("ingest_step_seconds_count", step="publish_raw") == steps + 1
+
+    page = client.get("/metrics")
+    assert page.status_code == 200 and "http_request_duration_seconds_bucket" in page.text
+    assert 'route="/metrics"' not in page.text   # the page doesn't count itself
 
 
 @pytest.mark.parametrize("bad", [

@@ -16,6 +16,7 @@ from typing import Literal
 import psycopg
 from aiokafka import AIOKafkaConsumer
 from fastapi import FastAPI, HTTPException, Query, Request
+from prometheus_client import Counter
 from pydantic import BaseModel, Field
 
 from app.cases import (
@@ -29,30 +30,31 @@ from app.cases import (
     parse,
     resolve_case,
 )
+from observability.http import instrument
 
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 DSN = os.getenv("ALERTS_DSN", "postgresql://alerts:alerts_dev_only@localhost:5432/fraud")
 TOPIC, GROUP = "txn.scored", "alert-svc"
 RETRY_SECONDS = 5
 log = logging.getLogger("alerts")
-# Exposed as metrics in week 3, step 7
-counters = {"cases_opened": 0, "already_open": 0, "not_flagged": 0, "unreadable": 0}
+# What happened to each txn.scored message: cases_opened, already_open, not_flagged, unreadable
+MESSAGES = Counter("alerts_messages_total", "txn.scored messages by outcome", ["outcome"])
 
 
 async def handle(conn, value):
     msg = parse(value)
     if msg is None:
         # Skipping beats retrying: an unreadable message would block every case behind it
-        counters["unreadable"] += 1
+        MESSAGES.labels("unreadable").inc()
         log.warning("skipped an unreadable %s message", TOPIC)
         return
     if msg.decision not in ("review", "decline"):
-        counters["not_flagged"] += 1
+        MESSAGES.labels("not_flagged").inc()
         return
     if await open_case(conn, msg) is None:
-        counters["already_open"] += 1
+        MESSAGES.labels("already_open").inc()
     else:
-        counters["cases_opened"] += 1
+        MESSAGES.labels("cases_opened").inc()
 
 
 async def consume():
@@ -93,10 +95,7 @@ async def lifespan(app):
 app = FastAPI(title="alert-svc", lifespan=lifespan)
 
 
-@app.get("/stats")
-def stats():
-    """Counts since start; a stand-in until the metrics in step 7. Not routed through Kong."""
-    return counters
+instrument(app, "alert-svc")
 
 
 # ---------- analyst routes, reached through Kong ----------

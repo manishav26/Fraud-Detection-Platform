@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 
 from store.guarded import GuardedStore
 
@@ -185,6 +186,32 @@ def test_cassandra_down_still_scores(client):
     assert r.status_code == 200 and r.json()["degraded"] is True
     assert r.json()["cold_start"] is False    # we don't know that the user is new
     assert current_model().seen_history is None
+
+
+def sample(name, **labels):
+    return REGISTRY.get_sample_value(name, labels) or 0
+
+
+def test_metrics_record_each_step_and_the_decision(client):
+    use_store(FakeStore())
+    steps = {s: sample("scoring_step_seconds_count", step=s)
+             for s in ("history_read", "predict", "reasons", "history_write")}
+    declines = sample("scoring_decisions_total", decision="decline", cold_start="true",
+                      degraded="false")
+    client.post("/score", json=req(KNOWN))   # FakeModel declines
+    for step, before in steps.items():
+        assert sample("scoring_step_seconds_count", step=step) == before + 1, step
+    assert sample("scoring_decisions_total", decision="decline", cold_start="true",
+                  degraded="false") == declines + 1
+    page = client.get("/metrics").text
+    assert 'scoring_model_info{version="fake-v1"} 1.0' in page
+
+
+def test_unknown_user_is_not_counted_as_a_fast_read(client):
+    use_store(FakeStore())
+    reads = sample("scoring_step_seconds_count", step="history_read")
+    client.post("/score", json=req(UNKNOWN))
+    assert sample("scoring_step_seconds_count", step="history_read") == reads
 
 
 def test_normal_payment_is_not_degraded(client):

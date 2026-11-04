@@ -9,7 +9,16 @@ import os
 import threading
 import time
 
+from prometheus_client import Counter, Gauge
+
 log = logging.getLogger("scoring.history")
+
+# Metrics replace the log lines as the record of breaker state (docs/metrics.md)
+BREAKER_OPEN = Gauge("history_breaker_open", "1 while the breaker refuses calls to Cassandra")
+OUTCOMES = Counter("history_calls_total", "Calls to Cassandra by result",
+                   ["op", "result"])   # result: ok, failed, refused (breaker open)
+SKIPPED_WRITES = Counter("history_skipped_writes_total",
+                         "Payments missing from history because their write failed or was refused")
 
 READ_TIMEOUT = float(os.getenv("CASSANDRA_READ_TIMEOUT_MS", "50")) / 1000
 # Longer than reads: a write that times out may still land, and writing it again is safe, but a
@@ -74,30 +83,37 @@ class GuardedStore:
         self.breaker = breaker or CircuitBreaker()
         self.skipped_writes = 0   # since the breaker last opened; these are gaps in history
 
-    def _guarded(self, call):
+    def _guarded(self, op, call):
         if not self.breaker.allow():
+            OUTCOMES.labels(op, "refused").inc()
             raise HistoryUnavailable("breaker open")
         try:
             result = call()
         except Exception as e:
+            OUTCOMES.labels(op, "failed").inc()
             # One line per change of state, not per payment: an outage would flood the log
             if self.breaker.record_failure():
+                BREAKER_OPEN.set(1)
                 log.error("Cassandra failing: scoring without history (%s)", e)
             raise HistoryUnavailable(str(e)) from e
+        OUTCOMES.labels(op, "ok").inc()
         if self.breaker.record_success():
+            BREAKER_OPEN.set(0)
             log.warning("Cassandra back: history in use again; %d writes were skipped",
                         self.skipped_writes)
             self.skipped_writes = 0
         return result
 
     def past(self, user_id, ts):
-        return self._guarded(lambda: self.store.past(user_id, ts, timeout=self.read_timeout))
+        return self._guarded("read", lambda: self.store.past(user_id, ts,
+                                                             timeout=self.read_timeout))
 
     def save(self, txn):
         try:
-            self._guarded(lambda: self.store.save(txn, timeout=self.write_timeout))
+            self._guarded("write", lambda: self.store.save(txn, timeout=self.write_timeout))
         except HistoryUnavailable as e:
             self.skipped_writes += 1
+            SKIPPED_WRITES.inc()
             # A real failure, not the breaker refusing: name the payment, so a gap can be traced.
             # While the breaker is open the count above is enough, or an outage would flood the log.
             if e.__cause__ is not None:
