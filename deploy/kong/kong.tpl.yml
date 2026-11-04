@@ -18,6 +18,9 @@ services:
             config: { claims_to_verify: [exp] }
           - name: acl
             config: { allow: [client] }
+          # A payment is about 3 KB; anything far bigger is refused (413) before ingest reads it
+          - name: request-size-limiting
+            config: { allowed_payload_size: 16, size_unit: kilobytes }
   - name: alerts
     url: http://alert-svc:8000
     routes:
@@ -32,6 +35,8 @@ services:
             config: { claims_to_verify: [exp] }
           - name: acl
             config: { allow: [analyst, admin] }
+          - name: rate-limiting
+            config: { second: 10, limit_by: consumer, policy: local }
       - name: cases-resolve
         methods: [POST]
         paths: ["~/cases/[0-9]+/resolve$"]
@@ -41,9 +46,33 @@ services:
             config: { claims_to_verify: [exp] }
           - name: acl
             config: { allow: [analyst] }
+          - name: rate-limiting
+            config: { second: 10, limit_by: consumer, policy: local }
+          - name: request-size-limiting
+            config: { allowed_payload_size: 4, size_unit: kilobytes }
   - name: token
     url: http://token-issuer:8000
     routes:
       - name: token
         paths: ["/token"]
         strip_path: false
+        plugins:
+          # No client is known yet here, so limit by address: slows down guessing secrets.
+          # In compose every laptop call shares one address, so this is a shared budget there.
+          - name: rate-limiting
+            config: { second: 5, limit_by: ip, policy: local }
+          - name: request-size-limiting
+            config: { allowed_payload_size: 1, size_unit: kilobytes }
+
+# Per-client rate limit on payments (threat 7, test ST7). `local`: counted in Kong's memory,
+# which is exact with one Kong; several Kongs would each count separately. Over the limit: 429.
+plugins:
+  - name: rate-limiting
+    route: score
+    config: { second: 50, limit_by: consumer, policy: local }
+  # The test-only load-test client gets more, so replay and load tests can send about 100/s.
+  # A rule for a route and a consumer together wins over the route's own rule.
+  - name: rate-limiting
+    route: score
+    consumer: load-test
+    config: { second: 500, limit_by: consumer, policy: local }

@@ -13,6 +13,7 @@ import asyncio
 import random
 from datetime import UTC, datetime, timedelta
 
+from load.credentials import LOAD_CLIENT, credentials
 from load.sender import run
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -53,11 +54,13 @@ def main():
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--concurrency", type=int, default=64)
     p.add_argument("--url", default="http://localhost:8000")
+    p.add_argument("--client", default=LOAD_CLIENT, help="send as this client (docs/access.md)")
     args = p.parse_args()
 
-    print(f"Sending {int(args.rps * args.seconds):,} fake payments at {args.rps:g}/s")
+    print(f"Sending {int(args.rps * args.seconds):,} fake payments at {args.rps:g}/s"
+          f" as {args.client}")
     stats, wall = asyncio.run(run(schedule(args.rps, args.seconds, args.users, args.seed),
-                                  args.url, args.concurrency))
+                                  args.url, args.concurrency, creds=credentials(args.client)))
     print(stats.summary(wall))
 
 

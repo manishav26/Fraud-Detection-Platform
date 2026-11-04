@@ -54,6 +54,26 @@ plain SHA-256 is enough. Slow hashing (bcrypt, scrypt) is for passwords people c
    any such header a client sends, so it can't be faked through the gateway. This second check
    matters until week 4's NetworkPolicies stop anyone reaching alert-svc without Kong.
 
+## Rate and size limits (threat 7, ST7)
+
+| Route | Rate limit | Body limit |
+|---|---|---|
+| `POST /v1/transactions/score` | 50/s per client; `load-test` 500/s | 16 KB (a payment is about 3 KB) |
+| `/cases` read and resolve | 10/s per client | 4 KB on resolve |
+| `POST /token` | 5/s per address (no client known yet) | 1 KB |
+
+- Over the rate limit: **429**. Over the size limit: **413**, before the service reads the body.
+- **Per client,** so one noisy client uses up only its own allowance (ST7).
+- **`load-test` gets more** because replay and load tests send about 100/s. A rule for a route and a
+  client together wins over the route's own rule.
+- **`/token` per address:** it slows down guessing secrets. Every call from the laptop to compose
+  comes from one address, so there they share the 5/s.
+- **Counted in Kong's memory** (`policy: local`): exact with one Kong, as we run. With several Kongs,
+  each would count separately, and a shared counter (Redis) would be needed.
+
+**Test:** `make st7`: merchant-1 floods at 200/s while merchant-2 sends 10/s, in separate processes.
+Pass: merchant-1's excess gets 429, and merchant-2's p95 rises less than 10%.
+
 **Test:** `make st2` calls every route as every role and as no one. For the case routes it uses a case
 id that doesn't exist: allowed roles get past both checks and get 404, forbidden ones get 403 from
 Kong. So it checks access without resolving a real case, and can run any time.
