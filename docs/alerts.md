@@ -6,8 +6,21 @@ analyst -> Kong -> alert-svc: list, read, resolve a case -> audit row
 make verify-audit -> recomputes the chain -> names the first broken row (ST8)
 ```
 
-Done so far: ingest publishes to `txn.scored` (commit 1), and the tables, audit chain and
-`verify_audit` (commit 2). alert-svc comes next.
+Done so far: ingest publishes to `txn.scored` (commit 1); the tables, audit chain and
+`verify_audit` (commit 2); alert-svc opening cases (commit 3). Analyst routes come next.
+
+## alert-svc (`services/alert-svc/`)
+
+- **Consumer group `alert-svc`:** copies of the service share the 6 partitions, so each message is
+  handled once. The opposite of scoring's promotions, where every pod reads everything.
+- **Starts from the beginning of the topic** the first time, so earlier flagged payments get cases.
+- **At-least-once:** a message's position is saved only after its case is saved. After a crash,
+  messages are read again, and `txn_id` being unique makes that harmless.
+- **One transaction per case:** the case and its `case_opened` audit row, both or neither.
+- **Unreadable message:** skipped, logged and counted. Retrying it would block every case behind it.
+- **Postgres or Redpanda down:** it starts over from the last saved position every 5 s.
+- **Its own login** (`alerts`), which can't change the audit log.
+- `GET /stats` (`make alert-stats`) shows counts until the metrics in step 7.
 
 ## Tables (`deploy/postgres/platform.sql`, `make db-schema`)
 
@@ -35,6 +48,9 @@ the append-only login must not have.
 
 **Same transaction as the change it records:** a case and its audit row are saved together or not
 at all.
+
+**Ids have gaps.** Postgres never reuses an id, even one taken by a transaction that was undone, as
+the tests' are. The chain links rows by hash, not by id, so gaps don't matter to `verify-audit`.
 
 ## Known limits
 

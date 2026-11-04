@@ -1,9 +1,14 @@
-.PHONY: keys up down test lint logs topics schema db-schema verify-audit k8s-verify-audit mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow
+.PHONY: keys up down test lint logs topics schema db-schema verify-audit k8s-verify-audit st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow
 keys:
 	./scripts/gen_keys.sh
 
+# Also creates topics and tables: compose's Cassandra keeps nothing across `make down`, and a
+# missing keyspace stops scoring from starting. All three steps are safe to repeat.
 up: keys
 	docker compose up -d --build
+	./scripts/create_topics.sh
+	./scripts/create_schema.sh
+	./scripts/create_db_schema.sh
 
 down:
 	docker compose down
@@ -26,6 +31,17 @@ db-schema:
 # Recompute the audit log's hash chain; names the first broken row (ST8)
 verify-audit:
 	python -m audit.verify
+
+# ST8: edit the audit log's ROW-th row by hand as the database owner, then put it back
+st8-tamper:
+	docker compose exec -T postgres psql -U fraud -d fraud -v ON_ERROR_STOP=1 -v row=$(ROW) -v actor=attacker < security/tests/st8_tamper_audit.sql
+
+st8-restore:
+	docker compose exec -T postgres psql -U fraud -d fraud -v ON_ERROR_STOP=1 -v row=$(ROW) -v actor=alert-svc < security/tests/st8_tamper_audit.sql
+
+# Cases opened since alert-svc started (until the metrics in step 7)
+alert-stats:
+	docker compose exec -T alert-svc python -c "import urllib.request as u; print(u.urlopen('http://localhost:8000/stats').read().decode())"
 
 # End-to-end check of the model registry (needs `make up`). Design: docs/mlflow.md
 mlflow-check:

@@ -86,6 +86,14 @@ services:
     image: fraud/ingest-svc:dev
     environment: { SCORING_URL: "http://scoring-svc:8000", KAFKA_BOOTSTRAP: "redpanda:29092" }
     depends_on: [scoring-svc, redpanda]
+  alert-svc:  # opens cases from txn.scored. Design: docs/alerts.md
+    build: { context: ., dockerfile: services/alert-svc/Dockerfile }
+    image: fraud/alert-svc:dev
+    environment:
+      KAFKA_BOOTSTRAP: "redpanda:29092"
+      # Its own login: may add cases and audit rows, never change the audit log
+      ALERTS_DSN: "postgresql://alerts:alerts_dev_only@postgres:5432/fraud"
+    depends_on: [redpanda, postgres]
   kong:
     image: kong:3.7
     environment:

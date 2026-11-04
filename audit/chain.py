@@ -27,19 +27,37 @@ def row_hash(prev_hash, at, actor, action, target, details):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+LOCK = "SELECT pg_advisory_xact_lock(%s)"   # held until the transaction ends
+LAST = "SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1"
+INSERT = ("INSERT INTO audit_log (at, actor, action, target, details, prev_hash, hash)"
+          " VALUES (%s, %s, %s, %s, %s, %s, %s)")
+
+
+def _new_row(last, actor, action, target, details):
+    prev_hash = last[0] if last else GENESIS
+    at = datetime.now(UTC)   # microseconds, the same precision Postgres keeps
+    digest = row_hash(prev_hash, at, actor, action, target, details)
+    return digest, (at, actor, action, target, json.dumps(details), prev_hash, digest)
+
+
 def append(conn, actor, action, target, details):
     """Add one row, inside the caller's transaction, so it is saved together with what it
     records (for example the case it opened), or not at all. Returns the new row's hash."""
     with conn.cursor() as cur:
-        cur.execute("SELECT pg_advisory_xact_lock(%s)", (CHAIN_LOCK,))   # held until commit
-        cur.execute("SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1")
-        last = cur.fetchone()
-        prev_hash = last[0] if last else GENESIS
-        at = datetime.now(UTC)   # microseconds, the same precision Postgres keeps
-        digest = row_hash(prev_hash, at, actor, action, target, details)
-        cur.execute("INSERT INTO audit_log (at, actor, action, target, details, prev_hash, hash)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                    (at, actor, action, target, json.dumps(details), prev_hash, digest))
+        cur.execute(LOCK, (CHAIN_LOCK,))
+        cur.execute(LAST)
+        digest, values = _new_row(cur.fetchone(), actor, action, target, details)
+        cur.execute(INSERT, values)
+    return digest
+
+
+async def append_async(conn, actor, action, target, details):
+    """The same, for an async connection (alert-svc)."""
+    async with conn.cursor() as cur:
+        await cur.execute(LOCK, (CHAIN_LOCK,))
+        await cur.execute(LAST)
+        digest, values = _new_row(await cur.fetchone(), actor, action, target, details)
+        await cur.execute(INSERT, values)
     return digest
 
 
