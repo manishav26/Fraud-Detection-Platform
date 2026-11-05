@@ -16,7 +16,7 @@ NOVELTY_OF = ["P_emaildomain", "DeviceType", "ProductCD"]
 HISTORY_FEATURES = (["n_prev_txns", "txn_count_1h", "txn_count_24h", "txn_count_30d",
                      "amt_sum_24h", "amt_mean_30d", "amt_std_30d", "amount_zscore",
                      "secs_since_last"] + [f"new_{c}" for c in NOVELTY_OF])
-
+MIN_STD = 1e-6   # a spread below this is float rounding, not real: treat it as 0
 
 def add_history(df, time_col="TransactionDT", amount_col="TransactionAmt"):
     """Offline: add HISTORY_FEATURES to a table that already has `uid` and `uid_known`."""
@@ -27,8 +27,7 @@ def add_history(df, time_col="TransactionDT", amount_col="TransactionAmt"):
     idx = np.arange(len(df))
 
     key = g * np.int64(10**9) + t                       # sorted by user, then time
-    cs = np.concatenate([[0.0], np.cumsum(amt)])        # running sums for fast windows
-    cs2 = np.concatenate([[0.0], np.cumsum(amt ** 2)])
+    cs = np.concatenate([[0.0], np.cumsum(amt)])        # running sum for the 24 h total
     n_before = df.groupby(g).cumcount().to_numpy()
 
     for name, seconds in WINDOWS.items():
@@ -38,13 +37,19 @@ def add_history(df, time_col="TransactionDT", amount_col="TransactionAmt"):
         if name == "24h":
             df["amt_sum_24h"] = cs[idx] - cs[left]
         if name == "30d":
-            total, total2 = cs[idx] - cs[left], cs2[idx] - cs2[left]
+            # Mean and spread straight from each window, the same way history_for_one does.
+            # (Running sums of squares over the whole table lost precision: a user who always
+            # pays the same amount got a tiny fake spread and a zscore in the millions.)
+            mean = np.full(len(df), np.nan)
+            std = np.full(len(df), np.nan)
+            for i in np.flatnonzero(count > 0):
+                window = amt[left[i]:i]
+                mean[i] = window.mean()
+                if count[i] > 1:
+                    std[i] = window.std()
+            std = np.where(std < MIN_STD, 0.0, std)          # missing stays missing
+            df["amt_mean_30d"], df["amt_std_30d"] = mean, std
             with np.errstate(divide="ignore", invalid="ignore"):
-                mean = total / count
-                std = np.sqrt(np.maximum(total2 / count - mean ** 2, 0))
-                mean = np.where(count > 0, mean, np.nan)
-                std = np.where(count > 1, std, np.nan)
-                df["amt_mean_30d"], df["amt_std_30d"] = mean, std
                 df["amount_zscore"] = np.where(std > 0, (amt - mean) / std, np.nan)
 
     prev_t = np.roll(t, 1).astype(float)
@@ -86,6 +91,7 @@ def history_for_one(past, t, amount, values, known=True):
     last30 = [p["amount"] for p in past if p["t"] >= t - WINDOWS["30d"]]
     mean = float(np.mean(last30)) if last30 else float("nan")
     std = float(np.std(last30)) if len(last30) > 1 else float("nan")
+    std = 0.0 if std < MIN_STD else std          # same rounding rule as add_history
     out["amt_mean_30d"], out["amt_std_30d"] = mean, std
     out["amount_zscore"] = (amount - mean) / std if std > 0 else float("nan")
     out["secs_since_last"] = float(t - past[-1]["t"]) if past else float("nan")
