@@ -5,7 +5,15 @@ network only: Kong never routes it, because the numbers reveal internals.
 
 **On the cluster:** `make k8s-grafana`, then http://localhost:3000 (`admin` / `grafana_dev_only`),
 dashboard "Fraud platform". `make k8s-prometheus` shows what Prometheus reads, at
-http://localhost:9090/targets. Compose comes in the next commit.
+http://localhost:9090/targets.
+
+**On compose:** `make up` starts both. Open http://localhost:3000 (same login) and
+http://localhost:9090/targets, no tunnel needed. Both are opened to this laptop only. Prometheus
+reads a fixed list of services (`deploy/prometheus/prometheus.compose.yml`). Grafana uses the same
+dashboard file as the cluster. The three CPU and memory panels say "No data" on compose: those
+figures come from Kubernetes (cAdvisor). Getting them on compose would need a container with full
+access to Docker, and on a Mac it sees only Docker's virtual machine. Use `docker stats` there; the
+CPU questions are answered on the cluster, where the demo runs.
 
 ## How it fits together
 

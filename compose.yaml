@@ -107,6 +107,38 @@ services:
     volumes: ["./deploy/kong:/kong:ro"]
     ports: ["8000:8000"]
     depends_on: [ingest-svc, token-issuer]
+  # Metrics (week 3, step 7). Same versions and dashboard as the cluster. Design: docs/metrics.md
+  prometheus:
+    image: prom/prometheus:v3.13.5
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2d   # enough for a test day; keeps memory down
+    volumes:
+      - ./deploy/prometheus/prometheus.compose.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["127.0.0.1:9090:9090"]   # laptop only: it has no login
+    # Caps: the tool that measures the platform must not slow the platform down
+    cpus: 1
+    mem_limit: 768m
+  grafana:
+    image: grafana/grafana:11.6.7   # not 13: see deploy/k8s/base/grafana.yaml
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: grafana_dev_only
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # No calls home
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+    # The same files as the cluster: one dashboard to keep up to date
+    volumes:
+      - ./deploy/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./deploy/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./deploy/grafana/dashboards:/etc/grafana/dashboards:ro
+    ports: ["127.0.0.1:3000:3000"]   # laptop only
+    depends_on: [prometheus]
+    cpus: 1
+    mem_limit: 384m
 
 volumes:
   redpanda-data:
