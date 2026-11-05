@@ -2,6 +2,7 @@
 
     python -m observability.snapshot --minutes 10            # the last 10 minutes
     python -m observability.snapshot --minutes 10 --end 2026-11-05T01:30:00Z
+    python -m observability.snapshot --seconds 607 --end 1793900000   # an exact run (baseline.sh)
 
 On the cluster: make k8s-snapshot MINUTES=10 (through a tunnel). The numbers cover the whole window,
 so start it when the run starts and take it right after the run ends (or pass --end).
@@ -32,6 +33,8 @@ QUERIES = {
     "score_route_p95": 'histogram_quantile(0.95, sum by (le) (increase(http_request_duration_seconds_bucket{{service="scoring-svc", route="/score"}}[{w}])))',
     "steps_p95": "histogram_quantile(0.95, sum by (le, step) (increase(scoring_step_seconds_bucket[{w}])))",
     "cpu_node_peak": "max_over_time((sum by (node) (rate(container_cpu_usage_seconds_total{{id=\"/\"}}[1m])))[{w}:15s])",
+    # The pods that used the most CPU at their busiest, to see what drives a node's peak
+    "cpu_pod_peak": 'topk(5, max_over_time((sum by (pod) (rate(container_cpu_usage_seconds_total{{namespace="fraud", container!=""}}[1m])))[{w}:15s]))',
 }
 
 
@@ -55,15 +58,16 @@ def by_label(vector, label):
     return {s["metric"].get(label, ""): float(s["value"][1]) for s in vector}
 
 
-def collect(query, minutes):
-    w = f"{minutes}m"
+def collect(query, seconds):
+    """The numbers for the `seconds` before the query time (a whole number of seconds)."""
+    w = f"{seconds}s"
     r = {name: query(expr.format(w=w)) for name, expr in QUERIES.items()}
 
     def one(name):
         return by_label(r[name], "").get("", math.nan)
 
     return {
-        "minutes": minutes,
+        "seconds": seconds,
         "requests": by_label(r["requests"], "service"),
         "errors": by_label(r["errors"], "service"),
         "p50": by_label(r["p50"], "service"),
@@ -79,6 +83,7 @@ def collect(query, minutes):
         "score_route_p95": one("score_route_p95"),
         "steps_p95": by_label(r["steps_p95"], "step"),
         "cpu_node_peak": by_label(r["cpu_node_peak"], "node"),
+        "cpu_pod_peak": by_label(r["cpu_pod_peak"], "pod"),
     }
 
 
@@ -91,8 +96,8 @@ def count(n):
 
 
 def render(s):
-    seconds = s["minutes"] * 60
-    out = [f"Window: the last {s['minutes']} minutes.", "",
+    seconds = s["seconds"]
+    out = [f"Window: the last {seconds} s ({seconds / 60:.1f} minutes).", "",
            "| Service | Requests | Per second | p50 | p95 | p99 | 5xx |", "|---|---|---|---|---|---|---|"]
     for svc in sorted(s["requests"]):
         n = s["requests"][svc]
@@ -122,16 +127,23 @@ def render(s):
     if s["cpu_node_peak"]:
         out += ["", "| Node | Peak CPU (cores, 1-minute average) |", "|---|---|"]
         out += [f"| {node} | {v:.2f} |" for node, v in sorted(s["cpu_node_peak"].items())]
+    if s["cpu_pod_peak"]:
+        out += ["", "| Busiest pods | Peak CPU (cores, 1-minute average) |", "|---|---|"]
+        out += [f"| {pod} | {v:.2f} |"
+                for pod, v in sorted(s["cpu_pod_peak"].items(), key=lambda kv: -kv[1])]
     return "\n".join(out)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--url", default=PROMETHEUS)
-    ap.add_argument("--minutes", type=int, default=10)
+    window = ap.add_mutually_exclusive_group()
+    window.add_argument("--minutes", type=int, default=10)
+    window.add_argument("--seconds", type=int, help="an exact window, e.g. a load run's length")
     ap.add_argument("--end", help="end of the window (RFC 3339 or unix seconds); default now")
     args = ap.parse_args()
-    print(render(collect(prometheus_query(args.url, args.end), args.minutes)))
+    seconds = args.seconds or args.minutes * 60
+    print(render(collect(prometheus_query(args.url, args.end), seconds)))
 
 
 if __name__ == "__main__":

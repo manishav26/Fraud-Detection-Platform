@@ -14,7 +14,9 @@ request:
   attrs    the 51 raw columns listed in features/schema.yaml (missing -> null)
 
 --speed 1000 means 1000 seconds of data per real second (73 days in about 1.75 hours).
---speed 0 sends as fast as --concurrency allows. Results per payment, with the true label, go to
+--speed 0 sends as fast as --concurrency allows. --rps 30 instead sends exactly 30 payments per
+second, still in time order (load tests: real users, so Cassandra is used, at a fixed rate).
+--offset N skips the first N payments, so each load test uses fresh ones. Results per payment, with the true label, go to
 data/replay/results.csv (not committed).
 """
 
@@ -58,27 +60,32 @@ def to_request(row, attrs):
             "attrs": {c: clean(row[c]) for c in attrs}}
 
 
-def schedule(df, speed, chunk=10_000):
+def schedule(df, speed, chunk=10_000, rps=None):
     """(seconds from start, request, true label) for every row, in time order.
+
+    rps: send evenly at this many payments per second instead of following the data's times.
 
     Rows are turned into dicts 10,000 at a time, so 210k rows never sit in memory as dicts.
     """
     attrs = attr_columns()
     first = df["TransactionDT"].iloc[0]
     for i in range(0, len(df), chunk):
-        for row in df.iloc[i:i + chunk].to_dict("records"):
-            offset = (row["TransactionDT"] - first) / speed if speed else 0
+        for j, row in enumerate(df.iloc[i:i + chunk].to_dict("records"), start=i):
+            if rps:
+                offset = j / rps
+            else:
+                offset = (row["TransactionDT"] - first) / speed if speed else 0
             yield offset, to_request(row, attrs), row.get("isFraud")
 
 
-def load_rows(path, limit=None):
-    """Only the columns we send (the parquet has 434), sorted by time, with the proxy user id."""
+def load_rows(path, limit=None, offset=0):
+    """Only the columns we send (the parquet has 434), sorted by time, with the proxy user id.
+    offset: skip that many payments first (the proxy id uses only each row's own values)."""
     cols = ["TransactionID", "TransactionDT", "TransactionAmt", "isFraud", "D1",
             *attr_columns()]
     df = pd.read_parquet(path, columns=list(dict.fromkeys(cols)))
     df = df.sort_values("TransactionDT", kind="stable")
-    if limit:
-        df = df.head(limit)
+    df = df.iloc[offset:offset + limit] if limit else df.iloc[offset:]
     return add_proxy_id(df).reset_index(drop=True)
 
 
@@ -87,16 +94,20 @@ def main():
     p.add_argument("--data", default=ROOT / "data" / "processed" / "stream.parquet")
     p.add_argument("--speed", type=float, default=1000, help="data seconds per real second; 0 = max")
     p.add_argument("--limit", type=int, help="only the first N payments")
+    p.add_argument("--offset", type=int, default=0, help="skip the first N payments")
+    p.add_argument("--rps", type=float, help="fixed payments per second (ignores --speed)")
     p.add_argument("--concurrency", type=int, default=32)
     p.add_argument("--url", default="http://localhost:8000")
     p.add_argument("--out", default=ROOT / "data" / "replay" / "results.csv")
     args = p.parse_args()
 
-    df = load_rows(args.data, args.limit)
+    df = load_rows(args.data, args.limit, args.offset)
     days = (df["TransactionDT"].iloc[-1] - df["TransactionDT"].iloc[0]) / 86400
-    print(f"Replaying {len(df):,} payments ({days:.1f} days of data) at speed {args.speed:g}")
+    pace = f"{args.rps:g} per second" if args.rps else f"speed {args.speed:g}"
+    print(f"Replaying {len(df):,} payments ({days:.1f} days of data, from row {args.offset:,})"
+          f" at {pace}")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    stats, wall = asyncio.run(run(schedule(df, args.speed), args.url, args.concurrency,
+    stats, wall = asyncio.run(run(schedule(df, args.speed, rps=args.rps), args.url, args.concurrency,
                                   keep_rows=True))
     write_csv(stats.rows, args.out)
     print(stats.summary(wall))

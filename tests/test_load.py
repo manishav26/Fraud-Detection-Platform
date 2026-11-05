@@ -46,6 +46,27 @@ def test_replay_speed_compresses_time():
     assert offsets == [0, 1.0]   # 60 s of data in 1 s
 
 
+def test_replay_fixed_rate_ignores_data_times():
+    offsets = [o for o, _, _ in replay.schedule(stream_rows(), speed=60, rps=4)]
+    assert offsets == [0, 0.25]   # evenly spaced, though the rows are 60 s apart
+
+
+def test_replay_fixed_rate_stays_even_across_chunks():
+    df = pd.concat([stream_rows()] * 3, ignore_index=True)
+    offsets = [o for o, _, _ in replay.schedule(df, speed=0, chunk=4, rps=2)]
+    assert offsets == [i / 2 for i in range(6)]
+
+
+def test_load_rows_offset_skips_the_first_payments(tmp_path):
+    rows = pd.concat([stream_rows()] * 3, ignore_index=True)
+    rows["TransactionID"] = range(1, 7)
+    rows["TransactionDT"] = [100 * i for i in range(6)]
+    path = tmp_path / "stream.parquet"
+    rows.drop(columns=["uid", "uid_known"]).to_parquet(path)
+    assert replay.load_rows(path, limit=2, offset=3)["TransactionID"].tolist() == [4, 5]
+    assert replay.load_rows(path, offset=4)["TransactionID"].tolist() == [5, 6]
+
+
 def test_synthetic_requests_match_contract_and_repeat():
     a = list(synthetic.schedule(rps=10, seconds=2, users=50, seed=3))
     b = list(synthetic.schedule(rps=10, seconds=2, users=50, seed=3))

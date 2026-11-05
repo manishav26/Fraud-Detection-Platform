@@ -22,6 +22,7 @@ ANSWERS = {
     "score_route_p95": [sample(0.7)],
     "steps_p95": [sample(0.05, step="predict")],
     "cpu_node_peak": [sample(2.71, node="k3d-fraud-server-0")],
+    "cpu_pod_peak": [sample(0.4, pod="ingest-svc-a"), sample(0.9, pod="cassandra-0")],
 }
 
 
@@ -33,20 +34,20 @@ def fake_query(seen):
         return by_expr[expr]
 
     for name, expr in snapshot.QUERIES.items():
-        by_expr[expr.format(w="10m")] = ANSWERS[name]
+        by_expr[expr.format(w="600s")] = ANSWERS[name]
     return query
 
 
 def test_every_query_uses_the_window():
     seen = []
-    snapshot.collect(fake_query(seen), 10)
+    snapshot.collect(fake_query(seen), 600)
     assert len(seen) == len(snapshot.QUERIES)
-    assert all("10m" in e for e in seen)
+    assert all("600s" in e for e in seen)
     assert not any("{w}" in e or "{{" in e for e in seen)
 
 
 def test_collect_reads_each_answer():
-    s = snapshot.collect(fake_query([]), 10)
+    s = snapshot.collect(fake_query([]), 600)
     assert s["requests"] == {"ingest-svc": 6000, "scoring-svc": 6000}
     assert s["breaker_open_seconds"] == 20   # 4 samples, one per 5 s scrape
     assert s["calls_not_ok"] == {"read failed": 30}
@@ -54,17 +55,20 @@ def test_collect_reads_each_answer():
 
 
 def test_render_shows_rates_shares_and_gaps():
-    text = snapshot.render(snapshot.collect(fake_query([]), 10))
+    text = snapshot.render(snapshot.collect(fake_query([]), 600))
+    assert "Window: the last 600 s (10.0 minutes)." in text
     assert "| ingest-svc | 6,000 | 10.0 | 20 ms | 800 ms | 1500 ms | 1.00% |" in text
     assert "| scoring-svc | 6,000 | 10.0 | 10 ms | – | – | 0.00% |" in text
     assert "| degraded (any decision) | 120 (2.0%) |" in text
     assert "| breaker open | about 20 s |" in text
     assert "| ingest waits for scoring | 750 ms |" in text
     assert "| k3d-fraud-server-0 | 2.71 |" in text
+    assert text.index("| cassandra-0 | 0.90 |") < text.index("| ingest-svc-a | 0.40 |")
 
 
 def test_render_without_cpu_figures_leaves_the_table_out():
-    answers = dict(ANSWERS, cpu_node_peak=[])
+    answers = dict(ANSWERS, cpu_node_peak=[], cpu_pod_peak=[])
     s = snapshot.collect(lambda e: answers[next(n for n, q in snapshot.QUERIES.items()
-                                                if q.format(w="5m") == e)], 5)
-    assert "Peak CPU" not in snapshot.render(s)
+                                                if q.format(w="300s") == e)], 300)
+    text = snapshot.render(s)
+    assert "Peak CPU" not in text and "Busiest pods" not in text
