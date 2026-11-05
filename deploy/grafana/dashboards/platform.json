@@ -72,8 +72,10 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-  "min": 0,
-  "custom": {"axisSoftMax": 0.05}
+          "min": 0,
+          "custom": {
+            "axisSoftMax": 0.05
+          }
         },
         "overrides": []
       },
@@ -243,6 +245,66 @@
       ]
     },
     {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Where ingest's wait goes (p95)",
+      "description": "Line 1 is what ingest waits; line 2 is scoring's own time for /score, from when its main loop picks the request up (so it includes waiting for a worker thread). If 1 and 2 are close, the wait is inside scoring. If 1 is much larger, the time is spent before scoring starts timing: the network, or scoring's main loop too busy to pick requests up. Line 3 is scoring's slowest step.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ingest_step_seconds_bucket{step=\"wait_scoring\"}[1m])))",
+          "legendFormat": "ingest waits for scoring"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"scoring-svc\", route=\"/score\"}[1m])))",
+          "legendFormat": "scoring answers /score (queue + work)"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(histogram_quantile(0.95, sum by (le, step) (rate(scoring_step_seconds_bucket[1m]))))",
+          "legendFormat": "scoring's slowest step"
+        }
+      ]
+    },
+    {
       "id": 6,
       "type": "timeseries",
       "title": "Decisions per second",
@@ -253,7 +315,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 24,
+        "y": 32,
         "w": 12,
         "h": 8
       },
@@ -304,7 +366,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 24,
+        "y": 32,
         "w": 12,
         "h": 8
       },
@@ -364,7 +426,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 32,
+        "y": 40,
         "w": 12,
         "h": 8
       },
@@ -406,7 +468,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 32,
+        "y": 40,
         "w": 12,
         "h": 8
       },
@@ -457,7 +519,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 40,
+        "y": 48,
         "w": 12,
         "h": 8
       },
@@ -499,7 +561,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 40,
+        "y": 48,
         "w": 12,
         "h": 8
       },
@@ -541,7 +603,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 48,
+        "y": 56,
         "w": 24,
         "h": 8
       },
@@ -583,7 +645,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 56,
+        "y": 64,
         "w": 12,
         "h": 8
       },
@@ -625,7 +687,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 56,
+        "y": 64,
         "w": 12,
         "h": 8
       },

@@ -77,6 +77,10 @@ the model).
 
 ## First reading (4 Nov, replay on the cluster)
 
+Since revised: the 5 Nov run (`docs/results/metrics.md`) shows that much of the long wait below
+came from the first minute after a deploy. Once warm, ingest's wait was only 16 ms more than
+scoring's own time.
+
 - **Cassandra pauses explain the breaker opening.** Its log shows Java memory-cleanup pauses
   (`GCInspector`) of 956 ms and 636 ms during the replay. Reads are capped at 150 ms, so every read
   during a pause fails, the breaker opens, and those payments are scored `degraded`. The dashboard

@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus
+.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses
 keys:
 	./scripts/gen_keys.sh
 
@@ -185,6 +185,18 @@ k8s-st9-tamper:
 # The dashboard: http://localhost:3000 (admin / grafana_dev_only) until Ctrl+C. docs/metrics.md
 k8s-grafana:
 	kubectl -n fraud port-forward service/grafana 3000:3000
+
+# One run's numbers as markdown tables (docs/results/metrics.md): make k8s-snapshot MINUTES=10
+MINUTES ?= 10
+snapshot:
+	python -m observability.snapshot --minutes $(MINUTES)
+
+k8s-snapshot:
+	./scripts/k8s_tunnel.sh service/prometheus=9090:9090 -- python -m observability.snapshot --minutes $(MINUTES)
+
+# Cassandra's memory-cleanup pauses in the last MINUTES (they open the breaker; docs/metrics.md)
+k8s-gc-pauses:
+	@kubectl -n fraud logs cassandra-0 --since=$(MINUTES)m | grep GCInspector || echo "no pauses logged"
 
 # Prometheus's own page, to check what it reads: http://localhost:9090/targets
 k8s-prometheus:
