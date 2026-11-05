@@ -3,8 +3,9 @@
 1. Train LightGBM on days 1-73 (the 65 features in features/schema.yaml, raw D).
 2. Split validation by time: days 74-91 fit the calibrator, days 92-109 judge it.
 3. Isotonic calibration: map raw scores to probabilities that match observed fraud rates.
-4. Choose the review threshold that minimises expected cost on days 74-91:
-   cost = amount of fraud that gets approved + review_cost for every flagged payment.
+4. Choose the review threshold on days 74-91: the lowest threshold that keeps flagged payments
+   (review + decline) within analyst capacity (2%). Analysts are a fixed team, so unused
+   capacity is wasted. The $-cost rule is kept as a comparison.
 5. Report everything on days 92-109, which neither the model nor the calibrator saw.
 """
 
@@ -97,6 +98,11 @@ def best_review_threshold(probs, y, amount, review_cost, capacity=REVIEW_CAPACIT
     costs = [expected_cost(probs, y, amount, t, review_cost) for t in allowed]
     return float(allowed[int(np.argmin(costs))])
 
+def capacity_review_threshold(probs, capacity=REVIEW_CAPACITY):
+    """Lowest threshold whose flagged share (review + decline) stays within capacity."""
+    grid = np.round(np.arange(0.01, DECLINE_THRESHOLD, 0.01), 2)
+    allowed = [t for t in grid if (probs >= t).mean() <= capacity]
+    return float(allowed[0]) if allowed else DECLINE_THRESHOLD
 
 def decision_counts(probs, y, review_t, decline_t):
     decision = np.where(probs >= decline_t, "decline",
@@ -155,25 +161,26 @@ def main():
     print(f"\nactual fraud rate (days 92-109): {y_test.mean():.4f}")
     print(quality.to_string(index=False))
 
-    rows = []
+    def outcome(rule, t):
+        flagged = test_probs >= t
+        return {"rule": rule, "review threshold": t,
+                "flagged (days 74-91)": f"{(cal_probs >= t).mean():.2%}",
+                "flagged (test)": int(flagged.sum()),
+                "share flagged (test)": f"{flagged.mean():.2%}",
+                "frauds caught (test)": int((flagged & (y_test == 1)).sum()),
+                "frauds total (test)": int(y_test.sum())}
+
+    review_t = capacity_review_threshold(cal_probs)
+    rows = [outcome(f"capacity <= {REVIEW_CAPACITY:.0%} (chosen)", review_t)]
     for cost in REVIEW_COSTS:
         t = best_review_threshold(cal_probs, y_cal, cal["TransactionAmt"].to_numpy(), cost)
-        flagged = test_probs >= t
-        rows.append({"review cost ($)": cost, "review threshold": t,
-                     "flagged (test)": int(flagged.sum()),
-                     "share flagged": f"{flagged.mean():.1%}",
-                     "frauds caught (test)": int((flagged & (y_test == 1)).sum()),
-                     "frauds total (test)": int(y_test.sum()),
-                     "expected cost (test, $)": round(expected_cost(
-                         test_probs, y_test, test["TransactionAmt"].to_numpy(), t, cost))})
+        rows.append(outcome(f"cheapest at ${cost:.0f} per review", t))
     thresholds = pd.DataFrame(rows)
     print("\n", thresholds.to_string(index=False))
 
-    review_t = float(thresholds.loc[thresholds["review cost ($)"] == MAIN_REVIEW_COST,
-                                    "review threshold"].iloc[0])
     counts = decision_counts(test_probs, y_test, review_t, DECLINE_THRESHOLD)
     print(f"\nproposed: review >= {review_t}, decline >= {DECLINE_THRESHOLD} "
-          f"(review cost ${MAIN_REVIEW_COST:.0f})\n")
+          f"(capacity rule, {REVIEW_CAPACITY:.0%})\n")
     print(counts)
 
     save_reliability_plot(y_test, raw_test, test_probs, FIGURES / "reliability.png")
@@ -185,11 +192,14 @@ def main():
         f.write(f"Actual fraud rate on days 92-109: {y_test.mean():.4f}\n\n")
         f.write("## Calibration quality\n\n" + quality.to_markdown(index=False) + "\n\n")
         f.write("![reliability](../figures/reliability.png)\n\n")
-        f.write("## Review threshold by assumed review cost\n\n"
-                "Chosen on days 74-91 to minimise missed fraud dollars + review cost per "
-                "flagged payment; evaluated on days 92-109.\n\n")
+        f.write("## Review threshold: capacity rule vs cost rule\n\n"
+                f"Chosen on days 74-91: the lowest threshold that keeps flagged payments "
+                f"(review + decline) within {REVIEW_CAPACITY:.0%}, since analysts are a fixed "
+                "team and unused capacity is wasted. The cost rows show the cheapest threshold "
+                "(missed fraud dollars + a cost per review) within the same cap, for comparison. "
+                "All outcomes measured on days 92-109.\n\n")
         f.write(thresholds.to_markdown(index=False) + "\n\n")
-        f.write(f"## Proposed decision rule (review cost ${MAIN_REVIEW_COST:.0f})\n\n")
+        f.write(f"## Proposed decision rule (capacity {REVIEW_CAPACITY:.0%})\n\n")
         f.write(f"approve below {review_t}, review from {review_t} to {DECLINE_THRESHOLD}, "
                 f"decline at {DECLINE_THRESHOLD} or above (calibrated probabilities).\n\n")
         f.write(counts.to_markdown() + "\n")
