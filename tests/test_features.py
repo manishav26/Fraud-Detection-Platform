@@ -151,3 +151,19 @@ def test_offline_matches_online_on_random_data():
         for name in HISTORY_FEATURES:
             assert online[name] == pytest.approx(r[name], nan_ok=True), name
         past.append({"t": r["TransactionDT"], "amount": r["TransactionAmt"], **values})
+
+
+def test_same_amount_every_time_has_zero_spread_on_both_sides():
+    # 40 equal payments: running sums of squares used to leave a tiny fake spread offline
+    # (and a zscore in the millions) while live scoring got exactly 0
+    rows = [("sam", i * 3600, 49.95, "a.com") for i in range(40)]
+    offline = add_history(make(rows))
+    past = []
+    for _, r in offline.iterrows():
+        online = history_for_one(past, r["TransactionDT"], r["TransactionAmt"],
+                                 {c: r[c] for c in NOVELTY_OF})
+        if r["n_prev_txns"] > 1:
+            assert r["amt_std_30d"] == 0 and online["amt_std_30d"] == 0
+            assert math.isnan(r["amount_zscore"]) and math.isnan(online["amount_zscore"])
+        past.append({"t": r["TransactionDT"], "amount": r["TransactionAmt"],
+                     **{c: r[c] for c in NOVELTY_OF}})

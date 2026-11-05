@@ -1,4 +1,4 @@
-# Thresholds on calibrated fraud probability (week 2, see docs/results/calibration.md).
+# Thresholds on calibrated fraud probability (tuned v1, week 3; see docs/results/calibration.md).
 # Review threshold chosen with analyst capacity <= 2% of payments.
-review_threshold: 0.39
+review_threshold: 0.55
 decline_threshold: 0.70

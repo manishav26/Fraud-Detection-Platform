@@ -1,0 +1,9 @@
+# LightGBM settings for model v1, chosen by ml/train/tune.py
+n_estimators: 1200
+learning_rate: 0.0777
+num_leaves: 31
+min_child_samples: 20
+subsample: 0.85
+subsample_freq: 1
+colsample_bytree: 0.54
+reg_lambda: 2.1408

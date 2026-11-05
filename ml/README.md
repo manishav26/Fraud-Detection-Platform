@@ -45,10 +45,10 @@ decision = model.decide(prob)               # approve / review / decline
 
 | Metric | Value |
 |---|---|
-| PR-AUC | 0.504 (random: 0.035) |
-| Fraud caught at 1% false alarms | 42.8% |
-| Decision rule | approve < 0.39, review 0.39-0.70, decline >= 0.70 (calibrated) |
-| Flagged / precision of flagged | 1.5% of payments / 79% |
-| Scoring time | 0.05 ms per transaction (P95) |
+| PR-AUC | 0.497 (random: 0.035) |
+| Fraud caught at 1% false alarms | 43.2% |
+| Decision rule | approve < 0.55, review 0.55-0.70, decline >= 0.70 (calibrated, tuned v1) |
+| Flagged / precision of flagged | 1.3% of payments / 83% |
+| Scoring time | 0.15 ms per transaction (P95) |
 
 Details: [docs/results/](../docs/results/) and [docs/model_card.md](../docs/model_card.md).

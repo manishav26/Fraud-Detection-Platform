@@ -19,6 +19,7 @@ from ml.train.calibrate import (
     TARGET,
     fit_calibrator,
     load_data,
+    model_params,
     to_model_input,
     train_model,
 )
@@ -81,7 +82,7 @@ def main():
     p50, p95, p99 = np.percentile(times, [50, 95, 99])
     print(f"latency per transaction: P50 {p50:.2f} ms, P95 {p95:.2f} ms, P99 {p99:.2f} ms")
     print(f"test days 92-109: PR-AUC {pr_auc:.4f}, recall @ 1% FPR {recall:.4f}")
-
+    settings = ", ".join(f"{k} {v}" for k, v in model_params().items())
     CARD.write_text(f"""# Model card: fraud-lgbm-v1
 
 ## What it is
@@ -97,8 +98,8 @@ LightGBM classifier with isotonic calibration. Input: the 65 features in
 | Test | 92-109 | all numbers below |
 
 ## Settings
-n_estimators 400, learning_rate 0.05, num_leaves 64, random_state 42,
-LightGBM {info['lightgbm']}. No tuning yet (week 3).
+{settings}, random_state 42,
+LightGBM {info['lightgbm']}. Settings from random search (docs/results/tuning.md).
 
 ## Results (test days 92-109)
 | Metric | Value |

@@ -13,7 +13,8 @@ def test_decision_thresholds_come_from_config():
     model.meta = {"thresholds": thresholds}
     assert model.decide(0.1) == "approve"
     assert model.decide(thresholds["review_threshold"]) == "review"
-    assert model.decide(0.5) == "review"
+    middle = (thresholds["review_threshold"] + thresholds["decline_threshold"]) / 2
+    assert model.decide(middle) == "review"
     assert model.decide(thresholds["decline_threshold"]) == "decline"
 
 
