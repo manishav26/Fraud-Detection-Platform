@@ -67,6 +67,9 @@ services:
 # Per-client rate limit on payments (threat 7, test ST7). `local`: counted in Kong's memory,
 # which is exact with one Kong; several Kongs would each count separately. Over the limit: 429.
 plugins:
+  # Kong's metrics for Prometheus, on the status port only (docs/metrics.md)
+  - name: prometheus
+    config: { status_code_metrics: true, latency_metrics: true }
   - name: rate-limiting
     route: score
     config: { second: 50, limit_by: consumer, policy: local }

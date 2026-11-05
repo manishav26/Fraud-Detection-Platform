@@ -1,0 +1,64 @@
+# Grafana: draws the dashboard in deploy/grafana/dashboards/. Inside the cluster only; reach it
+# with `make k8s-grafana`. Data source and dashboard are loaded from files at startup.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: grafana}
+  template:
+    metadata:
+      labels: {app: grafana}
+    spec:
+      containers:
+        - name: grafana
+          # 11.6, not 13: Grafana 13's new storage and search index took over 7 CPU cores at
+          # startup on this laptop and never became ready
+          image: grafana/grafana:11.6.7
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef: {name: grafana-admin}   # GF_SECURITY_ADMIN_USER / _PASSWORD
+          env:
+            - {name: GF_AUTH_ANONYMOUS_ENABLED, value: "false"}
+            # No calls home from the cluster
+            - {name: GF_ANALYTICS_REPORTING_ENABLED, value: "false"}
+            - {name: GF_ANALYTICS_CHECK_FOR_UPDATES, value: "false"}
+            - {name: GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES, value: "false"}
+          ports:
+            - {name: http, containerPort: 3000}
+          volumeMounts:
+            - {name: datasources, mountPath: /etc/grafana/provisioning/datasources, readOnly: true}
+            - {name: providers, mountPath: /etc/grafana/provisioning/dashboards, readOnly: true}
+            - {name: dashboards, mountPath: /etc/grafana/dashboards, readOnly: true}
+            - {name: data, mountPath: /var/lib/grafana}
+          readinessProbe:
+            httpGet: {path: /api/health, port: 3000}
+            periodSeconds: 5
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            # A CPU cap: the tool that measures the platform must not slow the platform down
+            limits: {cpu: "1", memory: 384Mi}
+      volumes:
+        - name: datasources
+          configMap: {name: grafana-datasources}
+        - name: providers
+          configMap: {name: grafana-providers}
+        - name: dashboards
+          configMap: {name: grafana-dashboards}
+        - name: data
+          emptyDir: {}   # Grafana's own state; the dashboard itself comes from git
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+spec:
+  selector: {app: grafana}
+  ports:
+    - {name: http, port: 3000}

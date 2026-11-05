@@ -9,6 +9,10 @@ spec:
   template:
     metadata:
       labels: {app: token-issuer}
+      annotations:   # Prometheus reads this pod's metrics (deploy/prometheus/)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
         - name: token-issuer

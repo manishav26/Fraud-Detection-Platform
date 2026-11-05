@@ -12,7 +12,8 @@ if [ -n "$(docker compose ps -q 2>/dev/null)" ]; then
 fi
 IMAGES=(fraud/token-issuer:dev fraud/ingest-svc:dev fraud/scoring-svc:dev fraud/mlflow:dev
         fraud/alert-svc:dev)
-PUBLIC=(kong:3.7 redpandadata/redpanda:v24.2.7 cassandra:4.1 postgres:16 rustfs/rustfs:latest)
+PUBLIC=(kong:3.7 redpandadata/redpanda:v24.2.7 cassandra:4.1 postgres:16 rustfs/rustfs:latest
+        prom/prometheus:v3.13.5 grafana/grafana:11.6.7)
 
 echo "1/5 build our images and copy them into the cluster"
 ./scripts/gen_keys.sh
@@ -56,6 +57,18 @@ kubectl -n "$NS" create secret generic mlflow-credentials \
   --from-literal=MLFLOW_BACKEND_STORE_URI=postgresql+psycopg2://mlflow:mlflow_dev_only@postgres:5432/mlflow \
   --from-literal=AWS_ACCESS_KEY_ID=minio_dev --from-literal=AWS_SECRET_ACCESS_KEY=minio_dev_only \
   --dry-run=client -o yaml | apply
+# Metrics: Prometheus's config and Grafana's data source, dashboard loader and dashboard
+kubectl -n "$NS" create configmap prometheus-config \
+  --from-file=prometheus.yml=deploy/prometheus/prometheus.k8s.yml --dry-run=client -o yaml | apply
+kubectl -n "$NS" create configmap grafana-datasources \
+  --from-file=deploy/grafana/datasources.yml --dry-run=client -o yaml | apply
+kubectl -n "$NS" create configmap grafana-providers \
+  --from-file=deploy/grafana/dashboards.yml --dry-run=client -o yaml | apply
+kubectl -n "$NS" create configmap grafana-dashboards \
+  --from-file=deploy/grafana/dashboards/ --dry-run=client -o yaml | apply
+kubectl -n "$NS" create secret generic grafana-admin \
+  --from-literal=GF_SECURITY_ADMIN_USER=admin --from-literal=GF_SECURITY_ADMIN_PASSWORD=grafana_dev_only \
+  --dry-run=client -o yaml | apply
 # alert-svc's own login: may add cases and audit rows, never change the audit log
 kubectl -n "$NS" create secret generic alerts-credentials \
   --from-literal=ALERTS_DSN=postgresql://alerts:alerts_dev_only@postgres:5432/fraud \
@@ -65,7 +78,7 @@ echo "3/5 apply the Kustomize base"
 kubectl apply -k deploy/k8s/base
 # config maps don't restart pods by themselves; restart ours so they read the current values
 kubectl -n "$NS" rollout restart deploy/token-issuer deploy/mlflow deploy/scoring-svc deploy/ingest-svc \
-  deploy/alert-svc deploy/kong
+  deploy/alert-svc deploy/kong deploy/prometheus deploy/grafana
 
 echo "4/5 wait for the data services, then create topics and the table"
 kubectl -n "$NS" rollout status statefulset/redpanda --timeout=180s
@@ -77,7 +90,7 @@ CQLSH="kubectl -n $NS exec -i cassandra-0 -- cqlsh" ./scripts/create_schema.sh
 PSQL="kubectl -n $NS exec -i postgres-0 -- psql" ./scripts/create_db_schema.sh
 
 echo "5/5 wait for our services (they retry until Redpanda and Cassandra answer)"
-for d in mlflow token-issuer scoring-svc ingest-svc alert-svc kong; do
+for d in mlflow token-issuer scoring-svc ingest-svc alert-svc kong prometheus grafana; do
   kubectl -n "$NS" rollout status "deploy/$d" --timeout=300s
 done
 kubectl -n "$NS" get pods -o wide

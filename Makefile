@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow
+.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus
 keys:
 	./scripts/gen_keys.sh
 
@@ -181,6 +181,14 @@ k8s-read-timing:
 # ST9 attack on the cluster: change a registered model's file behind MLflow's back
 k8s-st9-tamper:
 	kubectl -n fraud exec -i deploy/mlflow -- python - $(VERSION) < security/tests/st9_tamper_artifact.py
+
+# The dashboard: http://localhost:3000 (admin / grafana_dev_only) until Ctrl+C. docs/metrics.md
+k8s-grafana:
+	kubectl -n fraud port-forward service/grafana 3000:3000
+
+# Prometheus's own page, to check what it reads: http://localhost:9090/targets
+k8s-prometheus:
+	kubectl -n fraud port-forward service/prometheus 9090:9090
 
 # Keeps a tunnel open for the web page, http://localhost:5050, until you press Ctrl+C
 k8s-mlflow:

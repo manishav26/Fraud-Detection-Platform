@@ -103,6 +103,7 @@ services:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: /kong/kong.yml
       KONG_PROXY_LISTEN: 0.0.0.0:8000
+      KONG_STATUS_LISTEN: 0.0.0.0:8100   # Kong's own metrics, not published to the laptop
     volumes: ["./deploy/kong:/kong:ro"]
     ports: ["8000:8000"]
     depends_on: [ingest-svc, token-issuer]

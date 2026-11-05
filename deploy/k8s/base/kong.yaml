@@ -11,6 +11,10 @@ spec:
   template:
     metadata:
       labels: {app: kong}
+      annotations:   # Prometheus reads this pod's metrics (deploy/prometheus/)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8100"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
         - name: kong
@@ -23,6 +27,9 @@ spec:
             - {name: KONG_ADMIN_LISTEN, value: "off"}   # no admin API inside the cluster
             # Default is one worker per CPU the node has (12 here): over the memory limit
             - {name: KONG_NGINX_WORKER_PROCESSES, value: "2"}
+            # Kong's own metrics (latency per route, 401/403/429 counts) on a separate port
+            # that isn't exposed outside the cluster
+            - {name: KONG_STATUS_LISTEN, value: "0.0.0.0:8100"}
           ports:
             - {name: proxy, containerPort: 8000}
           volumeMounts:

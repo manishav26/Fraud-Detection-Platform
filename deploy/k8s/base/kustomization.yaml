@@ -5,7 +5,10 @@
 #   configmap  kong-config      deploy/kong/kong.yml    (kong)
 #   configmap  scoring-config   deploy/scoring.env      (scoring-svc, includes the model pins)
 #   configmap  promotion-public-key  promotion-keys/public.pem  (scoring-svc checks promotions)
-#   configmap  postgres-init   deploy/postgres/        (postgres: creates the mlflow database)
+#   configmap  prometheus-config, grafana-datasources, grafana-providers, grafana-dashboards
+#              deploy/prometheus/, deploy/grafana/   (metrics; docs/metrics.md)
+#   secret     grafana-admin   (dev password)
+#   configmap  postgres-init  deploy/postgres/        (postgres: creates the mlflow database)
 #   secret     postgres-credentials, objectstore-credentials, mlflow-credentials,
 #              alerts-credentials   (dev passwords)
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -19,6 +22,8 @@ resources:
   - objectstore.yaml
   - mlflow.yaml
   - alert-svc.yaml
+  - prometheus.yaml
+  - grafana.yaml
   - token-issuer.yaml
   - scoring.yaml
   - ingest.yaml

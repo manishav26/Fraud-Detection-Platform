@@ -12,6 +12,10 @@ spec:
   template:
     metadata:
       labels: {app: alert-svc}
+      annotations:   # Prometheus reads this pod's metrics (deploy/prometheus/)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
         - name: alert-svc
