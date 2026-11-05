@@ -5,16 +5,19 @@ Per request:
      (features/history.py, the same code as training). Unknown or new user -> cold start.
   2. Manisha's model gives a calibrated fraud probability; model.decide() turns it into
      approve / review / decline with the thresholds saved inside the model (config/decision.yaml).
-  3. Save the payment to Cassandra, so the user's next payment sees it.
+  3. Review or decline: add the top 3 reasons (TreeSHAP, model.explain_one).
+  4. Save the payment to Cassandra, so the user's next payment sees it.
 
 At startup the model files must match the SHA-256 values pinned in the deploy config
-(deploy/scoring.env), not only manifest.json in the model folder (threat 11, test ST9).
+(deploy/scoring.env), not only manifest.json in the model folder (threat 11, test ST9). After that,
+a signed promotion message can replace the model without a restart (registry/live_model.py).
 """
 
 import asyncio
 import hashlib
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -24,12 +27,17 @@ from pydantic import BaseModel
 
 from features.history import NOVELTY_OF, history_for_one
 from ml.model import FILES, FraudModel
-from store.history import HistoryStore, to_datetime
+from registry.live_model import LiveModel, follow_promotions
+from store.guarded import GuardedStore, HistoryUnavailable
+from store.history import HistoryStore, is_known, to_datetime
 
 MODEL_DIR = Path(os.getenv("MODEL_DIR", "models/fraud-lgbm-v1"))
 DECISION_CONFIG = Path(os.getenv("DECISION_CONFIG", "config/decision.yaml"))
 PIN_ENV = {"model.txt": "MODEL_SHA256_MODEL_TXT", "meta.json": "MODEL_SHA256_META_JSON"}
-UNKNOWN_PART = "NA"   # features/proxy_id.py writes this for a missing part of the proxy id
+PROMOTION_KEY = Path(os.getenv("PROMOTION_PUBLIC_KEY_PATH", "promotion-keys/public.pem"))
+KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
+CATCH_UP_SECONDS = 30   # at most this long at startup to learn which model is live
+SLOW_MS = 100           # log where the time went for requests slower than this
 log = logging.getLogger("scoring")
 
 
@@ -59,6 +67,9 @@ class StubModel:
     def predict_one(self, request, history=None):
         return 0.12
 
+    def explain_one(self, request, history=None):
+        return []
+
     decide = FraudModel.decide   # same rule as the real model
 
 
@@ -72,23 +83,33 @@ def load_model():
     return model, model.meta["info"]["name"]
 
 
-def is_known(user_id):
-    """Training gives no history to ids with a missing part (uid_known = False); so do we."""
-    return UNKNOWN_PART not in user_id.split("|")
-
-
 def history_for(store, req):
-    """(history features, cold_start). None = no trusted history: the model sees missing values."""
+    """(history features, cold_start, degraded). None = no trusted history: the model sees
+    missing values. cold_start: the user has no history. degraded: we couldn't get it.
+    """
     if not is_known(req.user_id):
-        return None, True
+        return None, True, False
     try:
         past = store.past(req.user_id, req.ts)
-    except Exception:   # Cassandra down: score without history rather than fail the payment
-        log.exception("history read failed for %s; scoring as cold start", req.txn_id)
-        return None, True
+    except HistoryUnavailable:   # score without history rather than fail or delay the payment
+        return None, False, True
     values = {c: req.attrs.get(c) for c in NOVELTY_OF}
     features = history_for_one(past, to_datetime(req.ts).timestamp(), req.amount, values)
-    return features, not past
+    return features, not past, False
+
+
+def reasons_for(model, decision, request, history):
+    """Top reasons for flagged payments only: about 98% are approved, which saves 3 ms each.
+
+    A reason is an extra: if explaining fails, the payment still gets its decision.
+    """
+    if decision == "approve":
+        return []
+    try:
+        return model.explain_one(request, history)
+    except Exception:
+        log.exception("could not explain %s", request["txn_id"])
+        return []
 
 
 async def connect_store(attempts=30):
@@ -105,9 +126,26 @@ async def connect_store(attempts=30):
 
 @asynccontextmanager
 async def lifespan(app):
-    app.state.model, app.state.version = load_model()
-    app.state.store = await connect_store()
+    model, version = load_model()
+    app.state.store = GuardedStore(await connect_store())
+    follower = None
+    if PROMOTION_KEY.is_file():
+        app.state.live = LiveModel(model, version, PROMOTION_KEY.read_text(), FraudModel.load)
+        caught_up = asyncio.Event()
+        follower = asyncio.create_task(follow_promotions(app.state.live, KAFKA_BOOTSTRAP,
+                                                         caught_up))
+        try:
+            # A restarted pod should open its port already serving the promoted model
+            await asyncio.wait_for(caught_up.wait(), CATCH_UP_SECONDS)
+        except TimeoutError:
+            log.warning("promotions not read yet: serving %s and still trying", version)
+    else:
+        log.warning("no promotion key at %s: promotions are off, serving %s", PROMOTION_KEY, version)
+        app.state.live = LiveModel(model, version, None, FraudModel.load)
     yield
+    if follower:
+        follower.cancel()
+        await asyncio.gather(follower, return_exceptions=True)
     app.state.store.close()
 
 
@@ -127,13 +165,27 @@ class ScoreRequest(BaseModel):
 def score(req: ScoreRequest):
     # Plain `def`: FastAPI runs it in a worker thread, so the blocking Cassandra and model calls
     # don't stall other requests.
-    store = app.state.store
-    history, cold_start = history_for(store, req)
-    prob = app.state.model.predict_one(req.model_dump(), history)
+    # One copy for the whole request: a swap during it can't mix two models or names
+    model, version = app.state.live.current
+    store, request = app.state.store, req.model_dump()
+    start = time.perf_counter()
+    history, cold_start, degraded = history_for(store, req)
+    read = time.perf_counter()
+    prob = model.predict_one(request, history)
+    decision = model.decide(prob)
+    predicted = time.perf_counter()
+    reasons = reasons_for(model, decision, request, history)
+    explained = time.perf_counter()
     if is_known(req.user_id):
         try:
-            store.save(req.model_dump())   # before answering: the user's next payment needs it
-        except Exception:
-            log.exception("history write failed for %s", req.txn_id)
-    return {"txn_id": req.txn_id, "score": prob, "decision": app.state.model.decide(prob),
-            "model_version": app.state.version, "reasons": [], "cold_start": cold_start}
+            store.save(request)   # before answering: the user's next payment needs it
+        except HistoryUnavailable:
+            pass   # counted by the store; the payment is still safe in txn.raw
+    done = time.perf_counter()
+    if (done - start) * 1000 >= SLOW_MS:
+        log.warning("slow %s: read %.0f ms, predict %.0f ms, reasons %.0f ms, write %.0f ms",
+                    req.txn_id, (read - start) * 1000, (predicted - read) * 1000,
+                    (explained - predicted) * 1000, (done - explained) * 1000)
+    return {"txn_id": req.txn_id, "score": prob, "decision": decision,
+            "model_version": version, "reasons": reasons, "cold_start": cold_start,
+            "degraded": degraded}

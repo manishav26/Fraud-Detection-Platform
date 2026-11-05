@@ -1,0 +1,49 @@
+# RustFS: S3-compatible storage for model files. Only the S3 port is a Service; the web console
+# isn't exposed. Password from a Secret that `make k8s-up` creates.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: objectstore
+spec:
+  serviceName: objectstore
+  replicas: 1
+  selector:
+    matchLabels: {app: objectstore}
+  template:
+    metadata:
+      labels: {app: objectstore}
+    spec:
+      securityContext:
+        fsGroup: 10001   # the image's rustfs user can write to the disk
+      containers:
+        - name: objectstore
+          image: rustfs/rustfs:latest
+          imagePullPolicy: IfNotPresent   # imported by `make k8s-up`, like the compose image
+          envFrom:
+            - secretRef: {name: objectstore-credentials}
+          ports:
+            - {name: s3, containerPort: 9000}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+          readinessProbe:
+            tcpSocket: {port: 9000}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 512Mi}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: objectstore
+spec:
+  selector: {app: objectstore}
+  ports:
+    - {name: s3, port: 9000}

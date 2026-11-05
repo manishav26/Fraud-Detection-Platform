@@ -4,12 +4,14 @@ Flow per request (design: docs/ingest.md):
   1. FastAPI checks the body against the contract. Bad body -> copy to dlq.txn, return 422.
   2. Save the payment to txn.raw (acks=all, idempotent, key user_id). Fails -> 503, client retries.
   3. Ask scoring-svc for score and decision and return it right away (contract: 200 + decision).
+  4. In the background, publish payment + decision to txn.scored, where alert-svc opens cases.
 """
 
 import asyncio
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
@@ -23,10 +25,15 @@ from pydantic import AwareDatetime, BaseModel, Field
 
 SCORING_URL = os.getenv("SCORING_URL", "http://scoring-svc:8000")
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
-RAW_TOPIC, DLQ_TOPIC = "txn.raw", "dlq.txn"
+RAW_TOPIC, DLQ_TOPIC, SCORED_TOPIC = "txn.raw", "dlq.txn", "txn.scored"
 MAX_DLQ_BODY = 10_000   # characters of a bad body kept in dlq.txn
 SEND_TIMEOUT = 5.0      # seconds; then the client gets a 503 instead of a hang
+SLOW_MS = 100           # log where the time went for requests slower than this
 log = logging.getLogger("ingest")
+# Payments whose decision never reached txn.scored, so no case can open for them. Exposed as a
+# metric in week 3, step 7.
+counters = {"scored_publish_failures": 0}
+_background = set()   # running publish tasks; kept here so Python doesn't drop them half-way
 
 
 def new_producer():
@@ -72,6 +79,8 @@ async def lifespan(app):
     app.state.http = httpx.AsyncClient(base_url=SCORING_URL, timeout=5.0)
     yield
     await app.state.http.aclose()
+    # Let decisions still being published reach txn.scored before the producer closes
+    await asyncio.gather(*_background, return_exceptions=True)
     await app.state.producer.stop()
 
 
@@ -92,8 +101,9 @@ class Decision(BaseModel):
     score: float
     decision: str
     model_version: str
-    reasons: list[str] = []  # top 3 model reasons, filled from week 3
+    reasons: list[str] = []  # up to 3 model reasons; empty when approved
     cold_start: bool = False  # true: no trusted history for this user (unknown or new)
+    degraded: bool = False    # true: scored without history because Cassandra didn't answer
 
 
 def now():
@@ -103,6 +113,26 @@ def now():
 async def call_scoring(record):
     r = await app.state.http.post("/score", json=record)
     return r.json()
+
+
+async def publish_scored(producer, record, decision):
+    """Payment + decision to txn.scored. Runs after the client has its answer: the decision is
+    made and the payment is already safe in txn.raw, so a failure here must not become an error.
+    The cost is that a flagged payment could miss its case, so every failure is logged and counted.
+    """
+    try:
+        await publish(producer, SCORED_TOPIC, {**record, **decision, "scored_at": now()},
+                      key=record["user_id"].encode())
+    except KafkaError:
+        counters["scored_publish_failures"] += 1
+        log.warning("could not publish %s to %s (decision %s): no case will open for it",
+                    record["txn_id"], SCORED_TOPIC, decision.get("decision"))
+
+
+def in_background(coroutine):
+    task = asyncio.create_task(coroutine)
+    _background.add(task)
+    task.add_done_callback(_background.discard)
 
 
 @app.exception_handler(RequestValidationError)
@@ -122,13 +152,21 @@ async def send_to_dlq(request: Request, exc: RequestValidationError):
 @app.post("/v1/transactions/score", response_model=Decision)
 async def score_txn(txn: Transaction, request: Request):
     record = txn.model_dump(mode="json")
+    start = time.perf_counter()
     try:
         # key = user_id: one user's payments go to one partition, so they stay in order
         await publish(request.app.state.producer, RAW_TOPIC, record, key=txn.user_id.encode())
     except KafkaError:
         log.exception("could not save %s to %s", txn.txn_id, RAW_TOPIC)
         raise HTTPException(503, "could not record the transaction; retry with the same txn_id")
+    published = time.perf_counter()
 
     # scoring-svc decides (model.decide, thresholds saved with the model): one source of truth
     body = await call_scoring(record)
-    return Decision(**body)
+    done = time.perf_counter()
+    if (done - start) * 1000 >= SLOW_MS:
+        log.warning("slow %s: publish %.0f ms, scoring %.0f ms", txn.txn_id,
+                    (published - start) * 1000, (done - published) * 1000)
+    decision = Decision(**body)
+    in_background(publish_scored(request.app.state.producer, record, decision.model_dump()))
+    return decision

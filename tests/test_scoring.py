@@ -1,9 +1,12 @@
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+
+from store.guarded import GuardedStore
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,13 +26,20 @@ def req(user, ts="2017-12-10T10:00:00Z", amount=50.0):
 
 
 class FakeModel:
-    def __init__(self):
+    def __init__(self, prob=0.8, explain_error=False):
         self.meta = {"thresholds": {"review_threshold": 0.39, "decline_threshold": 0.70}}
         self.seen_history = "not called"
+        self.prob, self.explain_error, self.explained = prob, explain_error, 0
 
     def predict_one(self, request, history=None):
         self.seen_history = history
-        return 0.8
+        return self.prob
+
+    def explain_one(self, request, history=None):
+        self.explained += 1
+        if self.explain_error:
+            raise RuntimeError("explain failed")
+        return ["C1=72 (+2.32)"]
 
     decide = scoring.FraudModel.decide
 
@@ -38,23 +48,34 @@ class FakeStore:
     def __init__(self, past=(), broken=False):
         self.past_rows, self.broken, self.saved = list(past), broken, []
 
-    def past(self, user_id, ts):
+    def past(self, user_id, ts, timeout=None):
         if self.broken:
             raise RuntimeError("Cassandra down")
         return self.past_rows
 
-    def save(self, txn):
+    def save(self, txn, timeout=None):
+        if self.broken:
+            raise RuntimeError("Cassandra down")
         self.saved.append(txn["txn_id"])
 
 
 @pytest.fixture
 def client():
-    scoring.app.state.model, scoring.app.state.version = FakeModel(), "fake-v1"
+    use_model(FakeModel())
     return TestClient(scoring.app)   # no `with`: no real model or Cassandra needed
 
 
+def use_model(model):
+    scoring.app.state.live = SimpleNamespace(current=(model, "fake-v1"))
+    return model
+
+
+def current_model():
+    return scoring.app.state.live.current[0]
+
+
 def use_store(store):
-    scoring.app.state.store = store
+    scoring.app.state.store = GuardedStore(store)
     return store
 
 
@@ -93,6 +114,7 @@ def test_no_model_folder_means_stub(tmp_path, monkeypatch):
     monkeypatch.setattr(scoring, "DECISION_CONFIG", ROOT / "config/decision.yaml")
     model, version = scoring.load_model()
     assert version == "stub-0" and model.decide(model.predict_one({})) == "approve"
+    assert model.explain_one({}) == []
 
 
 def test_deploy_pins_match_the_trained_model():
@@ -113,7 +135,7 @@ def test_known_user_gets_history_and_is_saved(client):
     body = client.post("/score", json=req(KNOWN)).json()
     assert body["decision"] == "decline" and body["model_version"] == "fake-v1"
     assert body["cold_start"] is False
-    assert scoring.app.state.model.seen_history["n_prev_txns"] == 1
+    assert current_model().seen_history["n_prev_txns"] == 1
     assert store.saved == ["t9"]
 
 
@@ -121,18 +143,51 @@ def test_known_user_first_payment_is_cold_start_with_zero_counts(client):
     use_store(FakeStore())
     body = client.post("/score", json=req(KNOWN)).json()
     assert body["cold_start"] is True
-    assert scoring.app.state.model.seen_history["n_prev_txns"] == 0   # same as training
+    assert current_model().seen_history["n_prev_txns"] == 0   # same as training
 
 
 def test_unknown_user_gets_no_history_and_is_not_saved(client):
     store = use_store(FakeStore())
     body = client.post("/score", json=req(UNKNOWN)).json()
     assert body["cold_start"] is True
-    assert scoring.app.state.model.seen_history is None
+    assert current_model().seen_history is None
     assert store.saved == []
+
+
+@pytest.mark.parametrize("prob, decision", [(0.5, "review"), (0.8, "decline")])
+def test_flagged_payment_gets_reasons(client, prob, decision):
+    use_store(FakeStore())
+    use_model(FakeModel(prob))
+    body = client.post("/score", json=req(KNOWN)).json()
+    assert body["decision"] == decision and body["reasons"] == ["C1=72 (+2.32)"]
+
+
+def test_approved_payment_skips_explaining(client):
+    use_store(FakeStore())
+    model = use_model(FakeModel(prob=0.1))
+    body = client.post("/score", json=req(KNOWN)).json()
+    assert body["decision"] == "approve" and body["reasons"] == []
+    assert model.explained == 0
+
+
+def test_explain_failure_keeps_the_decision(client):
+    store = use_store(FakeStore())
+    use_model(FakeModel(explain_error=True))
+    r = client.post("/score", json=req(KNOWN))
+    assert r.status_code == 200
+    assert r.json()["decision"] == "decline" and r.json()["reasons"] == []
+    assert store.saved == ["t9"]
 
 
 def test_cassandra_down_still_scores(client):
     use_store(FakeStore(broken=True))
     r = client.post("/score", json=req(KNOWN))
-    assert r.status_code == 200 and r.json()["cold_start"] is True
+    assert r.status_code == 200 and r.json()["degraded"] is True
+    assert r.json()["cold_start"] is False    # we don't know that the user is new
+    assert current_model().seen_history is None
+
+
+def test_normal_payment_is_not_degraded(client):
+    use_store(FakeStore())
+    assert client.post("/score", json=req(KNOWN)).json()["degraded"] is False
+    assert client.post("/score", json=req(UNKNOWN)).json()["degraded"] is False

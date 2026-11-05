@@ -21,6 +21,20 @@ How it is used, per payment:
    the same code Manisha's training uses, so live and training features match.
 3. After scoring, the payment is written with `INSERT`.
 
+## Backfill
+
+Replay starts at day 110. Without earlier history, a customer with 40 past payments in training
+looks new live. `make backfill` (`store/backfill.py`) loads days 1-109 of known users.
+
+- **Straight to Cassandra, not through the gateway:** old payments must not be scored or appear in
+  `txn.raw` as new ones.
+- **Same user ids and timeline as replay**, using the same functions, and the same "known user" rule
+  as scoring, so old and new payments connect.
+- **Safe to run again:** upserts. An interrupted run can simply be restarted.
+- **Checked per user:** it compares stored and expected counts for 1,000 random users. A full
+  `COUNT(*)` scans the table and wouldn't show one user's rows being wrong.
+- **Run it when no load test is running:** it writes as fast as Cassandra allows.
+
 ## Why these choices
 
 - **Query-first design:** in Cassandra you design the table around the one question you ask.

@@ -13,11 +13,11 @@ GOOD = {"txn_id": "t1", "user_id": "u1", "amount": 10, "ts": "2026-10-19T10:00:0
 class FakeProducer:
     """Stands in for Redpanda: remembers what was sent, or fails like a broker that is down."""
 
-    def __init__(self, fail=False, hang=False):
-        self.sent, self.fail, self.hang = [], fail, hang
+    def __init__(self, fail=False, hang=False, fail_topics=()):
+        self.sent, self.fail, self.hang, self.fail_topics = [], fail, hang, fail_topics
 
     async def send_and_wait(self, topic, value=None, key=None):
-        if self.fail:
+        if self.fail or topic in self.fail_topics:
             raise KafkaTimeoutError()
         if self.hang:   # what aiokafka really does while the broker is down
             await asyncio.sleep(3600)
@@ -31,8 +31,28 @@ def client(monkeypatch):
                 "model_version": "stub-0", "reasons": [], "cold_start": True}
 
     monkeypatch.setattr(main, "call_scoring", fake_scoring)
+    # The test client stops its event loop after each request, which would cancel background
+    # work. So collect it here, and tests run it with run_background().
+    monkeypatch.setattr(main, "in_background", background.append)
     main.app.state.producer = FakeProducer()
-    return TestClient(main.app)   # no `with`: skips startup, so no real Redpanda needed
+    yield TestClient(main.app)   # no `with`: skips startup, so no real Redpanda needed
+    discard_background()
+
+
+background = []
+
+
+def discard_background():
+    """Close work a test didn't run, so Python doesn't warn that it was never awaited."""
+    for coroutine in background:
+        coroutine.close()
+    background.clear()
+
+
+def run_background():
+    for coroutine in background:
+        asyncio.run(coroutine)
+    background.clear()
 
 
 def test_good_payment_is_saved_then_decided(client):
@@ -42,6 +62,26 @@ def test_good_payment_is_saved_then_decided(client):
     [(topic, key, value)] = main.app.state.producer.sent
     assert topic == "txn.raw" and key == b"u1"
     assert value["txn_id"] == "t1" and value["attrs"]["card1"] == 1234
+
+
+def test_decision_is_published_to_txn_scored_after_answering(client):
+    client.post("/v1/transactions/score", json=GOOD)
+    assert [t for t, _, _ in main.app.state.producer.sent] == ["txn.raw"]   # not yet
+    run_background()
+    topic, key, value = main.app.state.producer.sent[1]
+    assert topic == "txn.scored" and key == b"u1"
+    assert value["txn_id"] == "t1" and value["amount"] == 10.0          # the payment
+    assert value["decision"] == "approve" and value["score"] == 0.12    # and its decision
+    assert "reasons" in value and "degraded" in value and value["scored_at"]
+
+
+def test_failed_scored_publish_still_answers_and_is_counted(client, monkeypatch):
+    monkeypatch.setitem(main.counters, "scored_publish_failures", 0)
+    main.app.state.producer = FakeProducer(fail_topics={"txn.scored"})
+    r = client.post("/v1/transactions/score", json=GOOD)
+    assert r.status_code == 200 and r.json()["decision"] == "approve"
+    run_background()
+    assert main.counters["scored_publish_failures"] == 1
 
 
 @pytest.mark.parametrize("bad", [
@@ -75,3 +115,4 @@ def test_redpanda_down_gives_503_and_no_score(client, monkeypatch, broken):
     main.app.state.producer = broken
     r = client.post("/v1/transactions/score", json=GOOD)
     assert r.status_code == 503
+    assert background == []   # nothing to publish for a payment that wasn't decided

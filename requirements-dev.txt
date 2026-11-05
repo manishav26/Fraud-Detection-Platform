@@ -16,3 +16,6 @@ cassandra-driver==3.30.1
 aiokafka==0.14.0
 pyarrow==26.0.0
 pyyaml==6.0.3
+psycopg[binary]==3.3.7
+# MLflow client for make register / make promote: same version as services/mlflow
+mlflow-skinny==3.17.2

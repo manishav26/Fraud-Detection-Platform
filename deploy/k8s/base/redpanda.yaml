@@ -1,10 +1,11 @@
-# Single Redpanda broker, same settings as compose. No disk: topics are lost when the pod restarts
-# (fine for dev; a 3-broker StatefulSet with volumes is the production shape).
+# Single Redpanda broker, same settings as compose. A disk, so a restart keeps the topics, and with
+# them which model is live (model.events). A 3-broker cluster is the production shape (later).
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: redpanda
 spec:
+  serviceName: redpanda
   replicas: 1
   selector:
     matchLabels: {app: redpanda}
@@ -12,6 +13,8 @@ spec:
     metadata:
       labels: {app: redpanda}
     spec:
+      securityContext:
+        fsGroup: 101   # the image's redpanda user can write to the disk
       containers:
         - name: redpanda
           image: redpandadata/redpanda:v24.2.7
@@ -29,12 +32,22 @@ spec:
             - --advertise-kafka-addr=internal://redpanda:29092,external://localhost:9092
           ports:
             - {name: kafka, containerPort: 29092}
+            - {name: kafka-tunnel, containerPort: 9092}   # reached only by kubectl port-forward
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/redpanda/data}
           readinessProbe:
             tcpSocket: {port: 29092}
             periodSeconds: 5
           resources:
             requests: {cpu: 250m, memory: 600Mi}
             limits: {memory: 1Gi}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: 2Gi}
 ---
 apiVersion: v1
 kind: Service

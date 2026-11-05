@@ -17,7 +17,28 @@ your laptop). Only Kong is reachable from outside; everything else is a ClusterI
 |---|---|---|
 | ingest-svc, scoring-svc | Deployment, 2 replicas | stateless: copies share the load, and one can die without an outage |
 | kong, token-issuer | Deployment, 1 replica | enough for dev |
-| redpanda, cassandra | Deployment, 1 replica, no disk | dev only: data is lost on restart. Production shape is a 3-node StatefulSet with volumes (later) |
+| redpanda, cassandra, postgres, objectstore | StatefulSet, 1 replica, with a disk | they hold data: topics and the live model, user history, the registry's records and files. 3-copy versions come later |
+
+## Reaching the cluster from the laptop
+
+MLflow has no login, so it is only a ClusterIP Service. `make k8s-register`, `make k8s-promote`,
+`make k8s-backfill` and `make k8s-mlflow` go through `kubectl port-forward` tunnels:
+
+- **Nothing new is open** outside the cluster, and the tunnels close when the command ends.
+- **The promotion private key never enters the cluster:** signing happens on the laptop.
+- **Stops if a port it needs is taken.** Compose uses the same ports, and a tunnel that failed to
+  open could otherwise send the command to compose instead.
+- The cluster's registry and history are separate from compose's, so load them separately.
+
+## Storage
+
+Each data service has a PersistentVolumeClaim on k3d's built-in `local-path` storage, so its data
+survives a pod restart. Two things to know:
+
+- **A disk belongs to one node.** The pod has to return to that node, so if the node is lost, so
+  is the service and its data. Real fault tolerance needs 3 copies across nodes.
+- **`make k8s-down` deletes the disks too,** because it deletes the namespace. That includes the
+  model registry and live model. To pause and keep everything: `k3d cluster stop fraud`.
 
 ## Where config comes from
 

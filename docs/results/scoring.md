@@ -14,6 +14,9 @@ Local Docker stack, model `fraud-lgbm-v1` (SHA-256 pinned in `deploy/scoring.env
 
 All 5,000 answered 200. 178 were really fraud (3.56%).
 
+Measured with an empty Cassandra: replay had no history from days 1-109, so users looked newer than
+they are. The backfill comparison is in `docs/results/backfill.md`.
+
 | Decision | Payments | Really fraud | Not fraud |
 |---|---|---|---|
 | approve | 4,921 | 116 | 4,805 |

@@ -1,0 +1,52 @@
+# Model registry, same settings as compose (docs/mlflow.md). Inside the cluster only, because it has
+# no login: from the laptop, go through the tunnel in scripts/k8s_tunnel.sh.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mlflow}
+  template:
+    metadata:
+      labels: {app: mlflow}
+    spec:
+      containers:
+        - name: mlflow
+          image: fraud/mlflow:dev
+          imagePullPolicy: Never
+          envFrom:
+            - secretRef: {name: mlflow-credentials}
+          env:
+            - {name: MLFLOW_ARTIFACTS_DESTINATION, value: "s3://mlflow"}
+            - {name: MLFLOW_S3_ENDPOINT_URL, value: "http://objectstore:9000"}
+            - {name: AWS_DEFAULT_REGION, value: us-east-1}
+            # Background workers for GenAI features we don't use: too much memory
+            - {name: MLFLOW_SERVER_ENABLE_JOB_EXECUTION, value: "false"}
+            - {name: MLFLOW_SERVER_ALLOWED_HOSTS, value: "mlflow,mlflow:*,localhost,localhost:*,127.0.0.1:*"}
+          ports:
+            - {name: http, containerPort: 5000}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+              httpHeaders:
+                - {name: Host, value: localhost}   # MLflow rejects host names it doesn't know
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+spec:
+  selector: {app: mlflow}
+  ports:
+    - {name: http, port: 5000}

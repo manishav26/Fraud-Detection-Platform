@@ -26,10 +26,12 @@ models/
 
 # Editor and OS files
 .vscode/
+.claude/
 .idea/
 .DS_Store
 # Platform (Urmi)
 keys/
+promotion-keys/
 deploy/kong/kong.yml
 .pytest_cache/
 .ruff_cache/

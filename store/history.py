@@ -16,6 +16,8 @@ from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
 from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
 from cassandra.query import ConsistencyLevel, dict_factory
 
+UNKNOWN_PART = "NA"   # features/proxy_id.py writes this for a missing part of the proxy id
+
 # history feature column name -> Cassandra column name
 COLUMNS = {"P_emaildomain": "p_emaildomain", "DeviceType": "device_type",
            "ProductCD": "product_cd"}
@@ -25,6 +27,11 @@ INSERT = ("INSERT INTO txn_by_user (user_id, ts, txn_id, amount, p_emaildomain, 
 # Strictly earlier than ts: a payment never counts itself in its own history.
 SELECT = ("SELECT ts, amount, p_emaildomain, device_type, product_cd FROM txn_by_user"
           " WHERE user_id = ? AND ts < ?")
+
+
+def is_known(user_id):
+    """Training gives no history to ids with a missing part (uid_known = False); so do we."""
+    return UNKNOWN_PART not in user_id.split("|")
 
 
 def to_datetime(ts):
@@ -49,6 +56,11 @@ def to_past(rows):
              **{col: r[cass] for col, cass in COLUMNS.items()}} for r in rows]
 
 
+def _timeout(seconds):
+    # Only when set: passing timeout=None to the driver would mean "wait forever"
+    return {} if seconds is None else {"timeout": seconds}
+
+
 class HistoryStore:
     def __init__(self, hosts=None, keyspace="fraud", consistency=None):
         hosts = hosts or os.getenv("CASSANDRA_HOSTS", "localhost").split(",")
@@ -66,11 +78,13 @@ class HistoryStore:
         self.insert = self.session.prepare(INSERT)
         self.select = self.session.prepare(SELECT)
 
-    def save(self, txn):
-        self.session.execute(self.insert, row_values(txn))
+    def save(self, txn, timeout=None):
+        """timeout in seconds; None = the driver's default."""
+        self.session.execute(self.insert, row_values(txn), **_timeout(timeout))
 
-    def past(self, user_id, ts):
-        return to_past(self.session.execute(self.select, (user_id, to_datetime(ts))))
+    def past(self, user_id, ts, timeout=None):
+        return to_past(self.session.execute(self.select, (user_id, to_datetime(ts)),
+                                            **_timeout(timeout)))
 
     def close(self):
         self.cluster.shutdown()

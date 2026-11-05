@@ -1,0 +1,57 @@
+# Postgres: MLflow's records now, cases and the audit log later. Password from a Secret that
+# `make k8s-up` creates; the mlflow database comes from the postgres-init config map.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef: {name: postgres-credentials}
+          env:
+            - {name: POSTGRES_DB, value: fraud}
+            # A subfolder: Postgres refuses a data folder that isn't empty or owned by it
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports:
+            - {name: postgres, containerPort: 5432}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+          readinessProbe:
+            # Over TCP: during first-time setup Postgres listens only on its local socket
+            exec:
+              command: [pg_isready, -h, 127.0.0.1, -U, fraud, -d, mlflow]
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 512Mi}
+      volumes:
+        - name: init
+          configMap: {name: postgres-init}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: {app: postgres}
+  ports:
+    - {name: postgres, port: 5432}

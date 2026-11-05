@@ -1,10 +1,11 @@
-# Single Cassandra node, same heap as compose. No disk: data is lost when the pod restarts
-# (fine for dev; the 3-node StatefulSet for the consistency experiment comes later).
+# Single Cassandra node, same heap as compose. A disk, so a restart keeps user history
+# (the 3-node version for the consistency experiment comes later).
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: cassandra
 spec:
+  serviceName: cassandra
   replicas: 1
   selector:
     matchLabels: {app: cassandra}
@@ -21,6 +22,8 @@ spec:
             - {name: HEAP_NEWSIZE, value: 256M}
           ports:
             - {name: cql, containerPort: 9042}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/cassandra}
           readinessProbe:
             tcpSocket: {port: 9042}
             initialDelaySeconds: 30
@@ -28,6 +31,13 @@ spec:
           resources:
             requests: {cpu: 500m, memory: 1500Mi}
             limits: {memory: 2Gi}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: 5Gi}
 ---
 apiVersion: v1
 kind: Service
