@@ -3,43 +3,58 @@
 Reads txn.scored as the consumer group "alert-svc": copies of this service share the partitions,
 so each message is handled once. A message's position is saved only after its case is saved, so a
 crash means messages are read again, never lost; opening a case twice is harmless.
-Analyst routes come in week 3, step 5, commit 4.
+
+Analysts list, read and resolve cases through Kong (/cases), which checks their token first.
 """
 
 import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Literal
 
 import psycopg
 from aiokafka import AIOKafkaConsumer
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query, Request
+from prometheus_client import Counter
+from pydantic import BaseModel, Field
 
-from app.cases import open_case, parse
+from app.cases import (
+    READ_ROLES,
+    RESOLVE_ROLES,
+    AlreadyResolved,
+    get_case,
+    has_role,
+    list_cases,
+    open_case,
+    parse,
+    resolve_case,
+)
+from observability.http import instrument
 
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 DSN = os.getenv("ALERTS_DSN", "postgresql://alerts:alerts_dev_only@localhost:5432/fraud")
 TOPIC, GROUP = "txn.scored", "alert-svc"
 RETRY_SECONDS = 5
 log = logging.getLogger("alerts")
-# Exposed as metrics in week 3, step 7
-counters = {"cases_opened": 0, "already_open": 0, "not_flagged": 0, "unreadable": 0}
+# What happened to each txn.scored message: cases_opened, already_open, not_flagged, unreadable
+MESSAGES = Counter("alerts_messages_total", "txn.scored messages by outcome", ["outcome"])
 
 
 async def handle(conn, value):
     msg = parse(value)
     if msg is None:
         # Skipping beats retrying: an unreadable message would block every case behind it
-        counters["unreadable"] += 1
+        MESSAGES.labels("unreadable").inc()
         log.warning("skipped an unreadable %s message", TOPIC)
         return
     if msg.decision not in ("review", "decline"):
-        counters["not_flagged"] += 1
+        MESSAGES.labels("not_flagged").inc()
         return
     if await open_case(conn, msg) is None:
-        counters["already_open"] += 1
+        MESSAGES.labels("already_open").inc()
     else:
-        counters["cases_opened"] += 1
+        MESSAGES.labels("cases_opened").inc()
 
 
 async def consume():
@@ -80,7 +95,60 @@ async def lifespan(app):
 app = FastAPI(title="alert-svc", lifespan=lifespan)
 
 
-@app.get("/stats")
-def stats():
-    """Counts since start; a stand-in until the metrics in step 7."""
-    return counters
+instrument(app, "alert-svc")
+
+
+# ---------- analyst routes, reached through Kong ----------
+
+def connect():
+    # One connection per request: analysts send a handful of requests, not hundreds per second
+    return psycopg.AsyncConnection.connect(DSN, autocommit=True)
+
+
+def analyst(request, allowed):
+    """Who is acting, and may they? Kong sets both headers after checking the token and the role,
+    replacing any a client sends. Checked again here, so a request that somehow skipped Kong's
+    rules is still refused (NetworkPolicies, week 4, stop anyone bypassing Kong at all).
+    """
+    actor = request.headers.get("x-consumer-username")
+    if not actor:
+        raise HTTPException(403, "case routes must be called through the gateway")
+    if not has_role(request.headers.get("x-consumer-groups"), allowed):
+        raise HTTPException(403, "your role may not do this")
+    return actor
+
+
+class Resolution(BaseModel):
+    outcome: Literal["fraud", "not_fraud"]
+    note: str = Field(default="", max_length=500)
+
+
+@app.get("/cases")
+async def cases(request: Request, status: Literal["open", "fraud", "not_fraud"] = "open",
+                limit: int = Query(default=50, ge=1, le=200)):
+    analyst(request, READ_ROLES)
+    async with await connect() as conn:
+        return await list_cases(conn, status, limit)
+
+
+@app.get("/cases/{case_id}")
+async def one_case(request: Request, case_id: int):
+    analyst(request, READ_ROLES)
+    async with await connect() as conn:
+        case = await get_case(conn, case_id)
+    if case is None:
+        raise HTTPException(404, "no such case")
+    return case
+
+
+@app.post("/cases/{case_id}/resolve")
+async def resolve(request: Request, case_id: int, body: Resolution):
+    actor = analyst(request, RESOLVE_ROLES)
+    async with await connect() as conn:
+        try:
+            case = await resolve_case(conn, case_id, body.outcome, body.note, actor)
+        except AlreadyResolved:
+            raise HTTPException(409, "case already resolved") from None
+    if case is None:
+        raise HTTPException(404, "no such case")
+    return case

@@ -1,0 +1,47 @@
+# 2 copies of alert-svc. They read txn.scored as one consumer group, so the 6 partitions are split
+# between them and each flagged payment opens one case. If one copy stops, the other takes over
+# its partitions. Design: docs/alerts.md
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-svc
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: alert-svc}
+  template:
+    metadata:
+      labels: {app: alert-svc}
+      annotations:   # Prometheus reads this pod's metrics (deploy/prometheus/)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: alert-svc
+          image: fraud/alert-svc:dev
+          imagePullPolicy: Never
+          env:
+            - {name: KAFKA_BOOTSTRAP, value: "redpanda:29092"}
+          envFrom:
+            - secretRef: {name: alerts-credentials}   # ALERTS_DSN, with the `alerts` login
+          ports:
+            - {name: http, containerPort: 8000}
+          readinessProbe:
+            tcpSocket: {port: 8000}
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 100m, memory: 96Mi}
+            limits: {memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-svc
+spec:
+  selector: {app: alert-svc}
+  ports:
+    - {name: http, port: 8000}

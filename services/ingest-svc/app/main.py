@@ -21,7 +21,10 @@ from aiokafka.errors import KafkaError, KafkaTimeoutError
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
+from prometheus_client import Counter, Histogram
 from pydantic import AwareDatetime, BaseModel, Field
+
+from observability.http import BUCKETS, instrument
 
 SCORING_URL = os.getenv("SCORING_URL", "http://scoring-svc:8000")
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
@@ -30,9 +33,11 @@ MAX_DLQ_BODY = 10_000   # characters of a bad body kept in dlq.txn
 SEND_TIMEOUT = 5.0      # seconds; then the client gets a 503 instead of a hang
 SLOW_MS = 100           # log where the time went for requests slower than this
 log = logging.getLogger("ingest")
-# Payments whose decision never reached txn.scored, so no case can open for them. Exposed as a
-# metric in week 3, step 7.
-counters = {"scored_publish_failures": 0}
+# Where a payment's time goes in ingest: saving to txn.raw, then waiting for scoring
+STEP = Histogram("ingest_step_seconds", "Time per ingest step", ["step"], buckets=BUCKETS)
+# Payments whose decision never reached txn.scored, so no case can open for them
+SCORED_PUBLISH_FAILURES = Counter("ingest_scored_publish_failures_total",
+                                  "Decisions that could not be published to txn.scored")
 _background = set()   # running publish tasks; kept here so Python doesn't drop them half-way
 
 
@@ -85,6 +90,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title="ingest-svc", lifespan=lifespan)
+instrument(app, "ingest-svc")
 
 
 class Transaction(BaseModel):
@@ -124,7 +130,7 @@ async def publish_scored(producer, record, decision):
         await publish(producer, SCORED_TOPIC, {**record, **decision, "scored_at": now()},
                       key=record["user_id"].encode())
     except KafkaError:
-        counters["scored_publish_failures"] += 1
+        SCORED_PUBLISH_FAILURES.inc()
         log.warning("could not publish %s to %s (decision %s): no case will open for it",
                     record["txn_id"], SCORED_TOPIC, decision.get("decision"))
 
@@ -164,6 +170,8 @@ async def score_txn(txn: Transaction, request: Request):
     # scoring-svc decides (model.decide, thresholds saved with the model): one source of truth
     body = await call_scoring(record)
     done = time.perf_counter()
+    STEP.labels("publish_raw").observe(published - start)
+    STEP.labels("wait_scoring").observe(done - published)
     if (done - start) * 1000 >= SLOW_MS:
         log.warning("slow %s: publish %.0f ms, scoring %.0f ms", txn.txn_id,
                     (published - start) * 1000, (done - published) * 1000)

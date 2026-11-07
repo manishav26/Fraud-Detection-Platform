@@ -30,7 +30,7 @@ How to run the data prep, experiments and model training: see [ml/README.md](ml/
 ## Run locally
 `make up` starts the stack (needs Docker). Get a token and score a transaction:
 ```
-TOKEN=$(curl -s -X POST localhost:8000/token | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
+TOKEN=$(make -s token CLIENT=merchant-1)   # clients and roles: docs/access.md
 curl -s -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"txn_id":"t1","user_id":"u1","amount":10,"ts":"2026-10-19T10:00:00Z"}' localhost:8000/v1/transactions/score
 ```

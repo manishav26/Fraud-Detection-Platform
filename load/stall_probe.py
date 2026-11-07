@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 
 import httpx
 
+from load.credentials import LOAD_CLIENT, credentials
+
 TIMER_SECONDS = 0.05
 LATE_MS = 100
 SLOW_GATEWAY_MS = 100
@@ -51,10 +53,11 @@ async def vm_timer():
 
 
 async def gateway(url):
+    creds = credentials(LOAD_CLIENT)
     async with httpx.AsyncClient(base_url=url, timeout=30) as client:
         while True:
             t = time.perf_counter()
-            await client.post("/token")
+            await client.post("/token", json=creds)
             ms = (time.perf_counter() - t) * 1000
             if ms >= SLOW_GATEWAY_MS:
                 say(f"gateway /token took {ms:.0f} ms")

@@ -1,0 +1,26 @@
+# Prometheus on compose (week 3, step 7). Design: docs/metrics.md
+# Compose has one copy of each service, so targets are listed by name instead of found through
+# Kubernetes. The `app` label matches the cluster's, so the same dashboard works on both.
+global:
+  scrape_interval: 5s      # short: slow periods last about 10 s, and must show up
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: services
+    static_configs:
+      - {targets: ["ingest-svc:8000"], labels: {app: ingest-svc}}
+      - {targets: ["scoring-svc:8000"], labels: {app: scoring-svc}}
+      - {targets: ["alert-svc:8000"], labels: {app: alert-svc}}
+      - {targets: ["token-issuer:8000"], labels: {app: token-issuer}}
+
+  # Kong's prometheus plugin, on its status port (not published to the laptop)
+  - job_name: kong
+    static_configs:
+      - {targets: ["kong:8100"], labels: {app: kong}}
+
+  - job_name: redpanda
+    metrics_path: /public_metrics
+    static_configs:
+      - {targets: ["redpanda:9644"], labels: {app: redpanda}}
+
+  # No CPU or memory per container here: see docs/metrics.md

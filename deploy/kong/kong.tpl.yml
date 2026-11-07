@@ -1,11 +1,11 @@
 _format_version: "3.0"
+# Who may call what: the roles table in docs/access.md. On each route, `jwt` checks the token
+# and finds the client, then `acl` lets only the listed groups (roles) through; others get 403
+# here, before any service sees the request.
+
+# One consumer per client in deploy/clients.json, written in by scripts/gen_keys.sh
 consumers:
-  - username: dev-client
-    jwt_secrets:
-      - key: fraud-platform-issuer
-        algorithm: RS256
-        rsa_public_key: |
-@@PUBLIC_KEY@@
+@@CONSUMERS@@
 services:
   - name: ingest
     url: http://ingest-svc:8000
@@ -16,9 +16,66 @@ services:
         plugins:
           - name: jwt
             config: { claims_to_verify: [exp] }
+          - name: acl
+            config: { allow: [client] }
+          # A payment is about 3 KB; anything far bigger is refused (413) before ingest reads it
+          - name: request-size-limiting
+            config: { allowed_payload_size: 16, size_unit: kilobytes }
+  - name: alerts
+    url: http://alert-svc:8000
+    routes:
+      # Two routes, because reading and resolving allow different roles. Any other method or
+      # path under /cases matches neither and gets 404. /stats isn't routed at all.
+      - name: cases-read
+        methods: [GET]
+        paths: ["/cases"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config: { claims_to_verify: [exp] }
+          - name: acl
+            config: { allow: [analyst, admin] }
+          - name: rate-limiting
+            config: { second: 10, limit_by: consumer, policy: local }
+      - name: cases-resolve
+        methods: [POST]
+        paths: ["~/cases/[0-9]+/resolve$"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config: { claims_to_verify: [exp] }
+          - name: acl
+            config: { allow: [analyst] }
+          - name: rate-limiting
+            config: { second: 10, limit_by: consumer, policy: local }
+          - name: request-size-limiting
+            config: { allowed_payload_size: 4, size_unit: kilobytes }
   - name: token
     url: http://token-issuer:8000
     routes:
       - name: token
         paths: ["/token"]
         strip_path: false
+        plugins:
+          # No client is known yet here, so limit by address: slows down guessing secrets.
+          # In compose every laptop call shares one address, so this is a shared budget there.
+          - name: rate-limiting
+            config: { second: 5, limit_by: ip, policy: local }
+          - name: request-size-limiting
+            config: { allowed_payload_size: 1, size_unit: kilobytes }
+
+# Per-client rate limit on payments (threat 7, test ST7). `local`: counted in Kong's memory,
+# which is exact with one Kong; several Kongs would each count separately. Over the limit: 429.
+plugins:
+  # Kong's metrics for Prometheus, on the status port only (docs/metrics.md)
+  - name: prometheus
+    config: { status_code_metrics: true, latency_metrics: true }
+  - name: rate-limiting
+    route: score
+    config: { second: 50, limit_by: consumer, policy: local }
+  # The test-only load-test client gets more, so replay and load tests can send about 100/s.
+  # A rule for a route and a consumer together wins over the route's own rule.
+  - name: rate-limiting
+    route: score
+    consumer: load-test
+    config: { second: 500, limit_by: consumer, policy: local }

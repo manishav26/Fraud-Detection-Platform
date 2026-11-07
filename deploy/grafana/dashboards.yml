@@ -1,0 +1,10 @@
+# Loads every dashboard JSON in /etc/grafana/dashboards when Grafana starts. The JSON is in git
+# (deploy/grafana/dashboards/), so the report's charts come from a file anyone can load.
+apiVersion: 1
+providers:
+  - name: fraud-platform
+    folder: Fraud platform
+    type: file
+    allowUiUpdates: false   # change the JSON in git, not by clicking
+    options:
+      path: /etc/grafana/dashboards

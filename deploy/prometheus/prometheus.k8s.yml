@@ -1,0 +1,54 @@
+# Prometheus on the k3d cluster (week 3, step 7). Design: docs/metrics.md
+global:
+  scrape_interval: 5s      # short: slow periods last about 10 s, and must show up
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Every pod in `fraud` marked with prometheus.io/scrape: "true" (our services, Kong, Redpanda).
+  # Found by asking Kubernetes, so new copies (autoscaling in week 4) are read automatically.
+  - job_name: pods
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [fraud]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        target_label: __address__
+        regex: (.+);(.+)
+        replacement: $1:$2
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        target_label: app
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node
+
+  # CPU and memory of every container and node, from each node's kubelet (cAdvisor), reached
+  # through the Kubernetes API. Our main lead on the slow periods is CPU contention.
+  - job_name: cadvisor
+    scheme: https
+    authorization:
+      credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    kubernetes_sd_configs:
+      - role: node
+    relabel_configs:
+      - target_label: __address__
+        replacement: kubernetes.default.svc:443
+      - source_labels: [__meta_kubernetes_node_name]
+        target_label: __metrics_path__
+        regex: (.+)
+        replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+      - source_labels: [__meta_kubernetes_node_name]
+        target_label: node
+    metric_relabel_configs:
+      # Keep only what the dashboard uses: cAdvisor reports thousands of series
+      - source_labels: [__name__]
+        action: keep
+        regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_cpu_cfs_throttled_periods_total|container_cpu_cfs_periods_total

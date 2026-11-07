@@ -12,6 +12,10 @@ spec:
   template:
     metadata:
       labels: {app: redpanda}
+      annotations:   # Prometheus reads this pod's metrics (deploy/prometheus/)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9644"
+        prometheus.io/path: "/public_metrics"
     spec:
       securityContext:
         fsGroup: 101   # the image's redpanda user can write to the disk

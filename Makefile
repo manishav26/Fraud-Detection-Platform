@@ -1,11 +1,21 @@
-.PHONY: keys up down test lint logs topics schema db-schema verify-audit k8s-verify-audit st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow
+.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
 keys:
 	./scripts/gen_keys.sh
+
+# Print a token for one client:  TOKEN=$$(make -s token CLIENT=ana)   (docs/access.md)
+CLIENT ?= merchant-1
+token:
+	@python -m load.credentials $(CLIENT) --url $(URL)
 
 # Also creates topics and tables: compose's Cassandra keeps nothing across `make down`, and a
 # missing keyspace stops scoring from starting. All three steps are safe to repeat.
 up: keys
+	@# Compose and the k3d cluster together run this laptop out of memory and stall Docker
+	@if k3d cluster list fraud 2>/dev/null | grep -q " 1/1 "; then \
+		echo "The k3d cluster is running. Stop it first: k3d cluster stop fraud"; exit 1; fi
 	docker compose up -d --build
+	@# Kong reads kong.yml only when it starts, and compose doesn't restart it when the file changes
+	docker compose restart kong
 	./scripts/create_topics.sh
 	./scripts/create_schema.sh
 	./scripts/create_db_schema.sh
@@ -32,6 +42,24 @@ db-schema:
 verify-audit:
 	python -m audit.verify
 
+# ST1: 1,000 payments with bad tokens; all refused, none reach ingest (run with no other traffic)
+st1:
+	python security/tests/st1_tokens.py --url $(URL)
+
+k8s-st1:
+	python security/tests/st1_tokens.py --url http://localhost:8080 --rpk "kubectl -n fraud exec -i redpanda-0 -- rpk"
+
+k8s-st2:
+	python security/tests/st2_roles.py --url http://localhost:8080
+
+# ST2: every role calls every route and is checked against the roles table (docs/access.md)
+st2:
+	python security/tests/st2_roles.py --url $(URL)
+
+# ST7: one client floods at 200/s against a 50/s limit; another must barely notice
+st7:
+	python security/tests/st7_flood.py --url $(URL)
+
 # ST8: edit the audit log's ROW-th row by hand as the database owner, then put it back
 st8-tamper:
 	docker compose exec -T postgres psql -U fraud -d fraud -v ON_ERROR_STOP=1 -v row=$(ROW) -v actor=attacker < security/tests/st8_tamper_audit.sql
@@ -39,9 +67,10 @@ st8-tamper:
 st8-restore:
 	docker compose exec -T postgres psql -U fraud -d fraud -v ON_ERROR_STOP=1 -v row=$(ROW) -v actor=alert-svc < security/tests/st8_tamper_audit.sql
 
-# Cases opened since alert-svc started (until the metrics in step 7)
+# What alert-svc did with each txn.scored message since it started, from its /metrics page
+ALERT_COUNTS = import urllib.request as u; print({l.split('\"')[1]: int(float(l.split()[-1])) for l in u.urlopen('http://localhost:8000/metrics').read().decode().splitlines() if l.startswith('alerts_messages_total{')})
 alert-stats:
-	docker compose exec -T alert-svc python -c "import urllib.request as u; print(u.urlopen('http://localhost:8000/stats').read().decode())"
+	@docker compose exec -T alert-svc python -c "$(ALERT_COUNTS)"
 
 # End-to-end check of the model registry (needs `make up`). Design: docs/mlflow.md
 mlflow-check:
@@ -90,6 +119,12 @@ load:
 stall-probe:
 	python -m load.stall_probe --url $(URL)
 
+# Baseline (week 3, step 8): 1 minute warm-up, then 10 minutes of real payments at 30/s, then
+# that window's numbers. make baseline ON=k8s RUN=1 (1, 2, 3 or fresh); ON=compose RUN=1 (1-3).
+# Results: docs/results/baseline.md
+baseline:
+	./scripts/baseline.sh $(ON) $(RUN)
+
 lint:
 	ruff check .
 
@@ -130,12 +165,48 @@ k8s-backfill:
 k8s-verify-audit:
 	./scripts/k8s_tunnel.sh service/postgres=5432:5432 -- python -m audit.verify
 
+k8s-st8-tamper:
+	kubectl -n fraud exec -i postgres-0 -- psql -U fraud -d fraud -v ON_ERROR_STOP=1 -v row=$(ROW) -v actor=attacker < security/tests/st8_tamper_audit.sql
+
+k8s-st8-restore:
+	kubectl -n fraud exec -i postgres-0 -- psql -U fraud -d fraud -v ON_ERROR_STOP=1 -v row=$(ROW) -v actor=alert-svc < security/tests/st8_tamper_audit.sql
+
+# Counts from each alert-svc pod: each handles its own share of txn.scored's partitions
+k8s-alert-stats:
+	@for p in $$(kubectl -n fraud get pods -l app=alert-svc -o name); do \
+		echo "$$p $$(kubectl -n fraud exec $$p -- python -c "$(ALERT_COUNTS)")"; \
+	done
+
+# Cases in the cluster's Postgres, by status and decision
+k8s-cases:
+	kubectl -n fraud exec postgres-0 -- psql -U fraud -d fraud -c "SELECT status, decision, count(*) FROM cases GROUP BY 1, 2 ORDER BY 1, 2"
+
 k8s-read-timing:
 	./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.read_timing
 
 # ST9 attack on the cluster: change a registered model's file behind MLflow's back
 k8s-st9-tamper:
 	kubectl -n fraud exec -i deploy/mlflow -- python - $(VERSION) < security/tests/st9_tamper_artifact.py
+
+# The dashboard: http://localhost:3000 (admin / grafana_dev_only) until Ctrl+C. docs/metrics.md
+k8s-grafana:
+	kubectl -n fraud port-forward service/grafana 3000:3000
+
+# One run's numbers as markdown tables (docs/results/metrics.md): make k8s-snapshot MINUTES=10
+MINUTES ?= 10
+snapshot:
+	python -m observability.snapshot --minutes $(MINUTES)
+
+k8s-snapshot:
+	./scripts/k8s_tunnel.sh service/prometheus=9090:9090 -- python -m observability.snapshot --minutes $(MINUTES)
+
+# Cassandra's memory-cleanup pauses in the last MINUTES (they open the breaker; docs/metrics.md)
+k8s-gc-pauses:
+	@kubectl -n fraud logs cassandra-0 --since=$(MINUTES)m | grep GCInspector || echo "no pauses logged"
+
+# Prometheus's own page, to check what it reads: http://localhost:9090/targets
+k8s-prometheus:
+	kubectl -n fraud port-forward service/prometheus 9090:9090
 
 # Keeps a tunnel open for the web page, http://localhost:5050, until you press Ctrl+C
 k8s-mlflow:
