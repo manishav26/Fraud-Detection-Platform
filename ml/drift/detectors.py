@@ -139,3 +139,46 @@ class ADWIN:
         eps = np.sqrt(math.log(4 * n / self.delta) / (2 * m))
         hits = np.flatnonzero(np.abs(mean_old - mean_new) > eps)
         return int(n_old[hits[-1]]) if hits.size else None
+
+class DDM:
+    """Drift Detection Method (Gama et al., 2004) for a stream of 0/1 errors.
+
+    Tracks the error rate p and its standard deviation s = sqrt(p (1 - p) / n). It remembers
+    the lowest p + s seen so far (p_min, s_min). If p + s rises above p_min + 3 s_min, the
+    error rate has clearly gone up: drift. (Above p_min + 2 s_min is only a warning.)
+    After a drift it starts again from scratch, like ADWIN dropping its old window.
+    Unlike ADWIN it only notices the error rate going UP, which is what matters for fraud.
+    """
+
+    def __init__(self, min_n=30, warning_level=2.0, drift_level=3.0):
+        self.min_n = min_n
+        self.warning_level = warning_level
+        self.drift_level = drift_level
+        self.seen = 0
+        self.drifts = []          # positions (1-based count of values seen) where drift fired
+        self.warning = False
+        self._reset()
+
+    def _reset(self):
+        self.n = 0
+        self.p = 0.0
+        self.p_min = float("inf")
+        self.s_min = float("inf")
+
+    def update(self, error):
+        """Add one value (1 = error, 0 = correct); returns True if drift was detected."""
+        self.seen += 1
+        self.n += 1
+        self.p += (float(error) - self.p) / self.n
+        s = math.sqrt(self.p * (1 - self.p) / self.n)
+        if self.n < self.min_n:
+            return False
+        if self.p + s < self.p_min + self.s_min:
+            self.p_min, self.s_min = self.p, s
+        self.warning = self.p + s > self.p_min + self.warning_level * self.s_min
+        if self.p + s > self.p_min + self.drift_level * self.s_min:
+            self.drifts.append(self.seen)
+            self.warning = False
+            self._reset()
+            return True
+        return False
