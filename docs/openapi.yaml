@@ -85,7 +85,7 @@ paths:
                   txn_id: {type: string}
                   score: {type: number}
                   decision: {type: string, enum: [approve, review, decline]}
-                  model_version: {type: string}
+                  model_version: {type: string, description: "model name plus the first 8 characters of its model.txt SHA-256, e.g. fraud-lgbm-v1-535eb73c; changes whenever the model's files change"}
                   reasons: {type: array, items: {type: string}, description: "up to 3 features that raised the risk, e.g. C1=72 (+2.32); empty when approved"}
                   cold_start: {type: boolean, description: "true when the user has no trusted history (unknown id or first payment)"}
                   degraded: {type: boolean, description: "true when scored without history because the history store did not answer in time"}

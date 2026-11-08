@@ -81,6 +81,13 @@ message -> signature OK? -> for this model? -> newer sequence?
 - **Swap without errors:** the new model loads completely in a background thread. Then model and
   version name are replaced together in one step. Each request takes one copy of the pair, so it
   uses one model from start to finish.
+- **`model_version` names the exact files** (week 4): the model's name plus the first 8 characters
+  of its `model.txt` SHA-256, for example `fraud-lgbm-v1-535eb73c`. It is the same whether the
+  model was pinned at startup or promoted, so one model never has two labels and two models never
+  share one. (Before, a pinned model was labelled by its folder name and a promoted one by its
+  registry version, so registry version 1 and the folder `fraud-lgbm-v1` could be different
+  models with the same label.) The hash in the label has always just been checked, against the
+  pins or the signed promotion. The registry version is in the "now serving" log line.
 - **No consumer group:** in a group, only one pod would receive each message.
 - **Redpanda keeps its data now** (a named volume), or `make down` would forget the live model.
 

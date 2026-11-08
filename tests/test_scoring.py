@@ -118,6 +118,19 @@ def test_no_model_folder_means_stub(tmp_path, monkeypatch):
     assert model.explain_one({}) == []
 
 
+def test_pinned_model_gets_the_same_label_as_if_promoted(tmp_path, monkeypatch):
+    model_folder(tmp_path)
+    (tmp_path / "meta.json").write_text('{"info": {"name": "fraud-lgbm-v1"}}')
+    pins = {f: scoring.sha256(tmp_path / f) for f in scoring.FILES}
+    for f, env in scoring.PIN_ENV.items():
+        monkeypatch.setenv(env, pins[f])
+    monkeypatch.setattr(scoring, "MODEL_DIR", tmp_path)
+    monkeypatch.setattr(scoring.FraudModel, "load", staticmethod(lambda folder: "model"))
+    _, version = scoring.load_model()
+    assert version == f"fraud-lgbm-v1-{pins['model.txt'][:8]}"
+    assert version == scoring.model_label(tmp_path, pins["model.txt"])   # the promotion path's
+
+
 def test_deploy_pins_match_the_trained_model():
     folder = ROOT / "models/fraud-lgbm-v1"
     if not (folder / "model.txt").exists():

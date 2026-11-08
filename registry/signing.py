@@ -34,6 +34,19 @@ def model_hashes(folder):
     return {f: hashlib.sha256((Path(folder) / f).read_bytes()).hexdigest() for f in MODEL_FILES}
 
 
+def model_label(folder, model_txt_sha256):
+    """The `model_version` answers carry: the model's name plus the first 8 characters of its
+    model.txt SHA-256, e.g. fraud-lgbm-v1-535eb73c. The same files always get the same label,
+    whether pinned at startup or promoted, and different files never share one.
+
+    Pass a hash that has already been checked (against the pins or a signed promotion), so the
+    label never names files the service didn't verify.
+    """
+    meta = json.loads((Path(folder) / "meta.json").read_text())
+    name = (meta.get("info") or {}).get("name") or MODEL_NAME
+    return f"{name}-{model_txt_sha256[:8]}"
+
+
 def sign_promotion(model, version, sha256, sequence, private_key):
     """No expiry on purpose: the latest message stays in the topic, and a restarting pod must
     still accept it. An old message is refused by its lower `sequence` instead."""

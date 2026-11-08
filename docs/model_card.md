@@ -19,8 +19,8 @@ LightGBM 4.7.0. Settings from random search (docs/results/tuning.md).
 ## Results (test days 92-109)
 | Metric | Value |
 |---|---|
-| PR-AUC | 0.4966 |
-| Recall @ 1% FPR | 0.4320 |
+| PR-AUC | 0.4983 |
+| Recall @ 1% FPR | 0.4340 |
 | Fraud rate | 0.0351 |
 | Approve / review / decline share | 98.7% / 0.2% / 1.1% |
 
@@ -28,15 +28,15 @@ Decision thresholds (from `config/decision.yaml`): review >= 0.55,
 decline >= 0.7.
 
 ## Speed (one transaction at a time, 1000 requests, laptop)
-P50 0.08 ms, P95 0.15 ms, P99 0.16 ms. Budget: 5 ms.
+P50 0.30 ms, P95 0.42 ms, P99 0.55 ms. Budget: 5 ms.
 
 ## Files and integrity
 Saved in `models/fraud-lgbm-v1/` (not in git). SHA-256 checked on every load:
 
 | File | SHA-256 |
 |---|---|
-| model.txt | `26eff82aa44247b50c376cb3159a141098c6679711ebfe2fbfaaa0e1cfcf66f6` |
-| meta.json | `0e16ee8c1bace56ed234175a7c1cb5e19a70015ccf1d890bb07789ccc9f083ef` |
+| model.txt | `535eb73c2fb2a62d97a65fb9b8cada048bb57408a429b88b1f8524a969228d70` |
+| meta.json | `abd0c05bccfc91a3802243f9adb3d41126d27915b9003747428a32fa4f1d2d0c` |
 
 ## How to use (scoring service)
 ```python

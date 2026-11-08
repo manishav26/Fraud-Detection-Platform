@@ -4,8 +4,8 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from registry.live_model import LiveModel, version_label
-from registry.signing import model_hashes, sign_promotion
+from registry.live_model import LiveModel
+from registry.signing import model_hashes, model_label, sign_promotion
 
 
 def key_pair():
@@ -29,9 +29,14 @@ def registry(tmp_path):
         folder = tmp_path / version
         folder.mkdir()
         (folder / "model.txt").write_text(f"trees of version {version}")
-        (folder / "meta.json").write_text("{}")
+        (folder / "meta.json").write_text('{"info": {"name": "fraud-lgbm-v1"}}')
         versions[version] = folder
     return versions
+
+
+def label(registry, version):
+    """What answers must say after promoting `version`: its name and its model.txt hash."""
+    return f"fraud-lgbm-v1-{model_hashes(registry[version])['model.txt'][:8]}"
 
 
 def live_model(registry, load=None, download=None):
@@ -50,7 +55,7 @@ def tamper(registry, version="2"):
 def test_genuine_promotion_switches_model_and_name(registry):
     live = live_model(registry)
     assert live.apply_latest([message(registry)]) == []
-    assert live.current == ("model from 2", version_label("2"))
+    assert live.current == ("model from 2", label(registry, "2"))
     assert live.sequence == 100
 
 
@@ -85,7 +90,7 @@ def test_replayed_old_message_cannot_bring_back_an_old_model(registry):
     live = live_model(registry)
     live.apply_latest([message(registry, "3", sequence=200)])
     live.apply_latest([message(registry, "2", sequence=100)])
-    assert live.current[1] == version_label("3") and live.sequence == 200
+    assert live.current[1] == label(registry, "3") and live.sequence == 200
 
 
 def test_same_message_read_again_does_not_reload(registry):
@@ -101,7 +106,7 @@ def test_rollback_is_a_newer_promotion_of_an_older_version(registry):
     live = live_model(registry)
     live.apply_latest([message(registry, "3", sequence=200)])
     live.apply_latest([message(registry, "2", sequence=300)])
-    assert live.current[1] == version_label("2") and live.sequence == 300
+    assert live.current[1] == label(registry, "2") and live.sequence == 300
 
 
 def test_several_messages_load_only_the_newest(registry):
@@ -116,7 +121,7 @@ def test_tampered_newest_falls_back_to_older_genuine_promotion(registry):
     tamper(registry, "3")
     live = live_model(registry)
     live.apply_latest(tokens)
-    assert live.current[1] == version_label("2") and live.sequence == 100
+    assert live.current[1] == label(registry, "2") and live.sequence == 100
 
 
 def test_mlflow_down_keeps_serving_and_retries(registry):
@@ -130,7 +135,7 @@ def test_mlflow_down_keeps_serving_and_retries(registry):
 
     live.download = lambda version, tmp: registry[version]   # MLflow is back
     assert live.apply_latest([token]) == []
-    assert live.current[1] == version_label("2")
+    assert live.current[1] == label(registry, "2")
 
 
 def test_model_that_fails_to_load_changes_nothing(registry):
@@ -140,3 +145,17 @@ def test_model_that_fails_to_load_changes_nothing(registry):
     live = live_model(registry, load=broken)
     live.apply_latest([message(registry)])
     assert live.current == OLD and live.sequence is None
+
+
+def test_label_is_the_name_and_the_short_hash(tmp_path):
+    (tmp_path / "meta.json").write_text('{"info": {"name": "fraud-lgbm-v1"}}')
+    assert model_label(tmp_path, "535eb73c2fb2a62d97a65f") == "fraud-lgbm-v1-535eb73c"
+
+
+def test_label_without_a_name_falls_back_to_the_registry_name(tmp_path):
+    (tmp_path / "meta.json").write_text("{}")
+    assert model_label(tmp_path, "abcdef0123456789") == "fraud-lgbm-abcdef01"
+
+
+def test_versions_with_different_files_get_different_labels(registry):
+    assert label(registry, "2") != label(registry, "3")

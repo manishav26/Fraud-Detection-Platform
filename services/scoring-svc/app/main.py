@@ -30,6 +30,7 @@ from features.history import NOVELTY_OF, history_for_one
 from ml.model import FILES, FraudModel
 from observability.http import BUCKETS, instrument
 from registry.live_model import LiveModel, follow_promotions
+from registry.signing import model_label
 from store.guarded import GuardedStore, HistoryUnavailable
 from store.history import HistoryStore, is_known, to_datetime
 
@@ -86,9 +87,10 @@ def load_model():
     if not (MODEL_DIR / "model.txt").exists():
         log.warning("no model in %s: using the stub (score 0.12)", MODEL_DIR)
         return StubModel(yaml.safe_load(DECISION_CONFIG.read_text())), "stub-0"
-    verify_pins(MODEL_DIR, {f: os.getenv(env) for f, env in PIN_ENV.items()})
+    pins = {f: os.getenv(env) for f, env in PIN_ENV.items()}
+    verify_pins(MODEL_DIR, pins)
     model = FraudModel.load(MODEL_DIR)
-    return model, model.meta["info"]["name"]
+    return model, model_label(MODEL_DIR, pins["model.txt"])   # same label as if promoted
 
 
 def history_for(store, req):

@@ -2,6 +2,9 @@
 
 Local compose stack. Design: `docs/mlflow.md`.
 
+These runs used the week 3 labels (`fraud-lgbm-v` + registry version). Since week 4, labels are the
+model's name plus a short hash of its files, e.g. `fraud-lgbm-v1-535eb73c` (`docs/mlflow.md`).
+
 ## Promotion
 
 | Check | Result |
