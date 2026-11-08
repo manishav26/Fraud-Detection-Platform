@@ -35,7 +35,7 @@ plain SHA-256 is enough. Slow hashing (bcrypt, scrypt) is for passwords people c
 | `merchant-1`, `merchant-2` | client | sending payments. Two, so ST7 can flood with one and measure the other |
 | `load-test` | client | replay and load tests. Will get a higher rate limit, as our tools send about 100/s |
 | `ana`, `ben` | analyst | working on cases |
-| `admin` | admin | reading cases; promoting models still needs the signing key on the laptop |
+| `admin` | admin | reading cases; promoting and rolling back models (`make promote`, `make rollback`), which also needs the signing key on the laptop |
 
 ## Roles table (ST2)
 
@@ -44,15 +44,20 @@ plain SHA-256 is enough. Slow hashing (bcrypt, scrypt) is for passwords people c
 | `POST /v1/transactions/score` | yes | 403 | 403 | 401 |
 | `GET /cases`, `GET /cases/{id}` | 403 | yes | yes | 401 |
 | `POST /cases/{id}/resolve` | 403 | yes | 403 | 401 |
+| `GET /v1/model`, `GET /v1/model/history` | 403 | 403 | yes | 401 |
+| `POST /v1/model/promote`, `POST /v1/model/rollback` | 403 | 403 | yes | 401 |
 | `POST /token` | needs a client id and secret | | | |
 
 **Enforced twice:**
 1. **Kong** (`deploy/kong/kong.tpl.yml`): on each route, `jwt` checks the token and finds the client,
    then `acl` lets only the listed roles through. The case routes are split into a GET route and a
    POST route, because reading and resolving allow different roles. Forbidden requests stop here.
-2. **alert-svc** checks the role again, from the `X-Consumer-Groups` header Kong adds. Kong replaces
-   any such header a client sends, so it can't be faked through the gateway. This second check
-   matters until week 4's NetworkPolicies stop anyone reaching alert-svc without Kong.
+2. **alert-svc and model-admin-svc** check the role again, from the `X-Consumer-Groups` header Kong
+   adds. Kong replaces any such header a client sends, so it can't be faked through the gateway.
+   This second check matters until week 4's NetworkPolicies stop anyone reaching them without Kong.
+
+The model routes (week 4, step 6) need more than the admin role: a promotion must also be signed
+with the key on the admin's laptop (`docs/mlflow.md`).
 
 ## Bad tokens (threat 1, ST1)
 

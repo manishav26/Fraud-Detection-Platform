@@ -5,7 +5,7 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 | ID | Test | Result | Evidence |
 |----|------|--------|----------|
 | ST1 | Forged, expired, altered and `alg: none` tokens | **pass**: 1,000 of 1,000 got 401, none reached ingest (cluster) | below; `make k8s-st1` |
-| ST2 | Each role calls every route | **pass**: all 16 calls match the roles table, compose and cluster | below; `make st2` |
+| ST2 | Each role calls every route | **pass**: all 32 calls (8 routes, including the week 4 model routes) match the roles table, compose and cluster | below; `make st2`; `docs/results/model_admin.md` |
 | ST3 | Pod outside the mesh calls scoring directly | pending (week 4) | |
 | ST4 | ingest tries to reach Postgres | pending (week 4) | |
 | ST5 | Schemathesis fuzzing | pending (week 5) | |

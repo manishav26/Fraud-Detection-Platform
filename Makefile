@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
+.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-apply k8s-update k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
 keys:
 	./scripts/gen_keys.sh
 
@@ -81,9 +81,22 @@ MODEL_FOLDER ?= models/fraud-lgbm-v1
 register:
 	python -m registry.register --folder $(MODEL_FOLDER)
 
-# Make a registered version live: make promote VERSION=1
+# Make a registered version live, through model-admin-svc, with an audit row. Runs Manisha's
+# promotion gate first and stops if it says keep, unless OVERRIDE="why" (recorded). docs/mlflow.md
+#   make promote VERSION=4 [REASON="..."] [OVERRIDE="..."]      make rollback REASON="..."
 promote:
-	python -m registry.promote --version $(VERSION)
+	python -m registry.promote --version $(VERSION) --reason "$(REASON)" --override "$(OVERRIDE)" --url $(URL)
+
+# Back to the version live before the current one (no gate: it is the way back)
+rollback:
+	python -m registry.promote --rollback --reason "$(REASON)" --url $(URL)
+
+# What is live and every model change, from model-admin-svc (admin token)
+MODEL_HISTORY = TOKEN=$$(python -m load.credentials admin --url $(1)) && \
+	curl -s -H "Authorization: Bearer $$TOKEN" $(1)/v1/model && echo && \
+	curl -s -H "Authorization: Bearer $$TOKEN" "$(1)/v1/model/history?limit=10" && echo
+model-history:
+	@$(call MODEL_HISTORY,$(URL))
 
 # ST9 attack: change a registered model's file behind MLflow's back (docs/results/promotion.md)
 st9-tamper:
@@ -142,9 +155,22 @@ cluster:
 cluster-down:
 	k3d cluster delete fraud
 
-# Build, import and deploy the scoring path to k3d (needs `make cluster`)
+# Everything: build, copy into k3d, config, YAML, tables, restart all (needs `make cluster`).
+# Slow; needed the first time and when a service is added. Docs: docs/k8s.md
 k8s-up:
 	./scripts/k8s_up.sh
+
+# Config maps, secrets and YAML only, no images (steps like HPA or NetworkPolicies). Pods whose
+# YAML changed restart by themselves; RESTART lists ones that must re-read changed config:
+#   make k8s-apply                    make k8s-apply RESTART="kong scoring-svc"
+RESTART ?=
+k8s-apply:
+	./scripts/k8s_up.sh apply $(RESTART)
+
+# One of our services after a code change: rebuild, copy in, restart it (about a minute)
+#   make k8s-update SVC=model-admin-svc
+k8s-update:
+	./scripts/k8s_up.sh update $(SVC)
 
 # The cluster's registry, through tunnels (needs `make k8s-up`, and compose stopped). docs/k8s.md
 k8s-mlflow-check:
@@ -155,8 +181,17 @@ REGISTRY_TUNNELS := service/mlflow=5050:5000 pod/redpanda-0=9092:9092
 k8s-register:
 	./scripts/k8s_tunnel.sh $(REGISTRY_TUNNELS) -- python -m registry.register --folder $(MODEL_FOLDER)
 
+# Promotions now go through Kong (port 8080) to model-admin-svc: only MLflow needs a tunnel
 k8s-promote:
-	./scripts/k8s_tunnel.sh $(REGISTRY_TUNNELS) -- python -m registry.promote --version $(VERSION)
+	./scripts/k8s_tunnel.sh service/mlflow=5050:5000 -- python -m registry.promote --version $(VERSION) \
+		--reason "$(REASON)" --override "$(OVERRIDE)" --url http://localhost:8080
+
+k8s-rollback:
+	./scripts/k8s_tunnel.sh service/mlflow=5050:5000 -- python -m registry.promote --rollback \
+		--reason "$(REASON)" --url http://localhost:8080
+
+k8s-model-history:
+	@$(call MODEL_HISTORY,http://localhost:8080)
 
 # Load days 1-109 into the cluster's Cassandra, through a tunnel
 k8s-backfill:

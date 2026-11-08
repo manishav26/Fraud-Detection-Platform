@@ -47,11 +47,17 @@ def model_label(folder, model_txt_sha256):
     return f"{name}-{model_txt_sha256[:8]}"
 
 
-def sign_promotion(model, version, sha256, sequence, private_key):
+def sign_promotion(model, version, sha256, sequence, private_key, **extra):
     """No expiry on purpose: the latest message stays in the topic, and a restarting pod must
-    still accept it. An old message is refused by its lower `sequence` instead."""
+    still accept it. An old message is refused by its lower `sequence` instead.
+
+    `extra` claims (week 4: action, label, reason, gate) are signed too, so the audit row that
+    model-admin-svc writes from them says exactly what the key holder approved. Scoring ignores
+    them.
+    """
     return jwt.encode({"iss": ISSUER, "aud": AUDIENCE, "model": model, "version": str(version),
-                       "sha256": sha256, "sequence": sequence}, private_key, algorithm=ALGORITHM)
+                       "sha256": sha256, "sequence": sequence, **extra}, private_key,
+                      algorithm=ALGORITHM)
 
 
 def verify_promotion(token, public_key):

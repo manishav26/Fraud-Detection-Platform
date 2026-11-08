@@ -97,6 +97,17 @@ services:
       # Its own login: may add cases and audit rows, never change the audit log
       ALERTS_DSN: "postgresql://alerts:alerts_dev_only@postgres:5432/fraud"
     depends_on: [redpanda, postgres]
+  model-admin-svc:  # admin promote and rollback, each with an audit row. Design: docs/mlflow.md
+    build: { context: ., dockerfile: services/model-admin-svc/Dockerfile }
+    image: fraud/model-admin-svc:dev
+    environment:
+      KAFKA_BOOTSTRAP: "redpanda:29092"
+      # Its own login: may read and add audit rows, nothing else
+      MODEL_ADMIN_DSN: "postgresql://model_admin:model_admin_dev_only@postgres:5432/fraud"
+      PROMOTION_PUBLIC_KEY_PATH: /promotion/public.pem
+    volumes:
+      - ./promotion-keys/public.pem:/promotion/public.pem:ro   # checks promotions, can't sign one
+    depends_on: [redpanda, postgres]
   kong:
     image: kong:3.7
     environment:

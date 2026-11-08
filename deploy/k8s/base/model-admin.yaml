@@ -1,0 +1,54 @@
+# model-admin-svc: admin promote and rollback, each with an audit row (week 4, step 6). One copy:
+# admins send a few requests a day, and the audit chain's lock would make copies wait anyway.
+# It holds only the public promotion key: it can check a promotion, never sign one.
+# Design: docs/mlflow.md
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-admin-svc
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: model-admin-svc}
+  template:
+    metadata:
+      labels: {app: model-admin-svc}
+      annotations:   # Prometheus reads this pod's metrics (deploy/prometheus/)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: model-admin-svc
+          image: fraud/model-admin-svc:dev
+          imagePullPolicy: Never
+          env:
+            - {name: KAFKA_BOOTSTRAP, value: "redpanda:29092"}
+            - {name: PROMOTION_PUBLIC_KEY_PATH, value: /promotion/public.pem}
+          envFrom:
+            - secretRef: {name: model-admin-credentials}   # MODEL_ADMIN_DSN, `model_admin` login
+          ports:
+            - {name: http, containerPort: 8000}
+          volumeMounts:
+            - {name: promotion-key, mountPath: /promotion, readOnly: true}
+          readinessProbe:
+            tcpSocket: {port: 8000}
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 192Mi}
+      volumes:
+        - name: promotion-key
+          configMap: {name: promotion-public-key}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-admin-svc
+spec:
+  selector: {app: model-admin-svc}
+  ports:
+    - {name: http, port: 8000}

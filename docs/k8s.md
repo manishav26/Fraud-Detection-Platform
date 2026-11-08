@@ -3,6 +3,20 @@
 Manifests: `deploy/k8s/base/` (Kustomize). Deploy: `make cluster` then `make k8s-up`.
 Gateway: `http://localhost:8080` (compose stays on 8000).
 
+## Which deploy command
+
+| What changed | Command | Time |
+|---|---|---|
+| First time, or a new service | `make k8s-up` | 5–15 min |
+| One of our services' code | `make k8s-update SVC=model-admin-svc` | about 1 min |
+| Only YAML, config maps or Kong's config | `make k8s-apply RESTART="kong"` | under 1 min |
+| Docs, tests, laptop tools | nothing | |
+
+`make k8s-up` restarts everything at once, which keeps the laptop's CPU busy for minutes: the
+Kubernetes API can then time out (`TLS handshake timeout`). Wait until `kubectl -n fraud get pods`
+answers, then run it again; every step is safe to repeat. Docker Desktop's own Kubernetes should be
+off while the k3d cluster runs: both need memory from the same 8 GB.
+
 ## What runs where
 
 ```
@@ -53,9 +67,11 @@ survives a pod restart. Two things to know:
 
 ## How images get in
 
-There is no image registry. `make k8s-up` builds our 3 images with compose (names
+There is no image registry. `make k8s-up` builds our images with compose (names
 `fraud/<service>:dev`, the same in compose and in the manifests), then `k3d image import` copies
-them and the public images into every node. Our pods use `imagePullPolicy: Never`, so they can only
+them into every node. Public images (Kong, Cassandra, Redpanda, ...) are copied only if a node
+doesn't have them yet (`crictl inspecti` in each node): they never change under their tag, and
+copying them every time, a few GB into 3 nodes, was most of a deploy's time. Our pods use `imagePullPolicy: Never`, so they can only
 run the image we built, never one pulled from the internet with the same name.
 
 Two problems from the first deploy, both fixed:

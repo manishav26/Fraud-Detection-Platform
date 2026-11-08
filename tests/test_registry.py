@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import jwt
@@ -113,24 +114,45 @@ class FakeClient:
 
 def model_folder(path):
     (path / "model.txt").write_text("tree data")
-    (path / "meta.json").write_text("{}")
+    (path / "meta.json").write_text('{"info": {"name": "fraud-lgbm-v1"}}')
     return path
 
 
-def run_promote(tmp_path, client, **overrides):
-    published = []
+class FakeApi:
+    """model-admin-svc: records what it was sent, or refuses."""
+
+    def __init__(self, refuse=None):
+        self.sent, self.refuse = [], refuse
+
+    def send(self, action, token):
+        if self.refuse:
+            raise RuntimeError(self.refuse)
+        claims = verify_promotion(token, PUBLIC)
+        self.sent.append((action, claims))
+        return {"version": claims["version"], "label": claims["label"],
+                "sequence": claims["sequence"], "by": "admin"}
+
+
+GATE_PASS = {"passed": True, "against": "the pinned model", "pr_auc_gain": 0.02}
+GATE_KEEP = {"passed": False, "against": "version 4", "pr_auc_gain": -0.001}
+
+
+def run_promote(tmp_path, client, api=None, **overrides):
+    api = api or FakeApi()
     args = {"download": lambda version, folder: model_folder(tmp_path),
-            "validate": lambda folder: None, "publish": published.append,
-            "confirm": lambda version, hashes: True, **overrides}
-    return promote_tool.promote(client, "3", PRIVATE, **args), published
+            "validate": lambda folder: None, "gate": lambda api, folder: GATE_PASS,
+            "confirm": lambda *a: True, **overrides}
+    return promote_tool.promote(client, "3", PRIVATE, api, **args), api
 
 
-def test_promote_publishes_a_valid_message_and_moves_the_alias(tmp_path):
+def test_promote_sends_a_signed_message_with_label_and_gate(tmp_path):
     client = FakeClient()
-    sequence, published = run_promote(tmp_path, client)
-    claims = verify_promotion(published[0], PUBLIC)
-    assert claims["version"] == "3" and claims["sequence"] == sequence
-    assert len(claims["sha256"]["model.txt"]) == 64
+    answer, api = run_promote(tmp_path, client, reason="tuned v1")
+    action, claims = api.sent[0]
+    assert action == "promote" and claims["version"] == "3"
+    assert claims["sequence"] == answer["sequence"] and len(claims["sha256"]["model.txt"]) == 64
+    assert claims["label"] == f"fraud-lgbm-v1-{claims['sha256']['model.txt'][:8]}"
+    assert claims["gate"] == GATE_PASS and claims["reason"] == "tuned v1"
     assert client.aliases == {"production": "3"}
 
 
@@ -138,13 +160,36 @@ def test_later_promotion_has_a_higher_sequence(tmp_path):
     first, _ = run_promote(tmp_path, FakeClient())
     promote_tool.time.sleep(0.002)
     second, _ = run_promote(tmp_path, FakeClient())
-    assert second > first
+    assert second["sequence"] > first["sequence"]
+
+
+def test_gate_says_keep_stops_without_an_override(tmp_path):
+    client = FakeClient()
+    with pytest.raises(promote_tool.GateSaidKeep, match="OVERRIDE"):
+        run_promote(tmp_path, client, gate=lambda api, folder: GATE_KEEP)
+    assert client.aliases == {}
+
+
+def test_override_promotes_and_records_the_gate_and_reason(tmp_path):
+    _, api = run_promote(tmp_path, FakeClient(), gate=lambda api, folder: GATE_KEEP,
+                         override=True, reason="demo: show a promotion")
+    _, claims = api.sent[0]
+    assert claims["gate"]["passed"] is False and claims["reason"] == "demo: show a promotion"
+
+
+def test_rollback_skips_the_gate(tmp_path):
+    def gate(api, folder):
+        raise AssertionError("a rollback must not wait for the gate")
+
+    _, api = run_promote(tmp_path, FakeClient(), action="rollback", reason="v5 bad", gate=gate)
+    action, claims = api.sent[0]
+    assert action == "rollback" and claims["action"] == "rollback" and claims["gate"] is None
 
 
 def test_saying_no_changes_nothing(tmp_path):
     client = FakeClient()
-    sequence, published = run_promote(tmp_path, client, confirm=lambda v, h: False)
-    assert sequence is None and published == [] and client.aliases == {}
+    answer, api = run_promote(tmp_path, client, confirm=lambda *a: False)
+    assert answer is None and api.sent == [] and client.aliases == {}
 
 
 def test_version_not_ready_is_refused(tmp_path):
@@ -164,14 +209,33 @@ def test_model_that_does_not_load_is_never_signed(tmp_path):
     assert client.aliases == {}
 
 
-def test_alias_stays_put_if_publishing_fails(tmp_path):
-    def down(token):
-        raise TimeoutError
-
+def test_alias_stays_put_if_model_admin_refuses(tmp_path):
     client = FakeClient()
-    with pytest.raises(TimeoutError):
-        run_promote(tmp_path, client, publish=down)
+    with pytest.raises(RuntimeError, match="replayed"):
+        run_promote(tmp_path, client, api=FakeApi(refuse="replayed or old message"))
     assert client.aliases == {}
+
+
+def test_gate_runs_against_the_pinned_model_until_something_is_promoted(tmp_path):
+    seen = []
+
+    class Api:
+        def __init__(self, live):
+            self._live = live
+
+        def live(self):
+            return {"live": self._live}
+
+    def gate(candidate, current, against):
+        seen.append((Path(current), against))
+        return GATE_PASS
+
+    promote_tool.gate_against_live(Api(None), tmp_path, gate=gate)
+    promote_tool.gate_against_live(Api({"version": "4", "label": "fraud-lgbm-v1-535eb73c"}),
+                                   tmp_path, gate=gate,
+                                   download=lambda version, tmp: Path(tmp) / f"v{version}")
+    assert seen[0] == (promote_tool.PINNED, "the pinned model")
+    assert seen[1][0].name == "v4" and "version 4" in seen[1][1]
 
 
 # ---------- register ----------

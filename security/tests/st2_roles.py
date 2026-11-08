@@ -2,9 +2,10 @@
 
     make st2                 (compose)        make st2 URL=http://localhost:8080   (cluster)
 
-"Allowed" means the request got past Kong and alert-svc's role checks: 200 for a payment or list,
-404 for the case id below, which doesn't exist. That proves access without resolving a real case,
-so this can run as often as needed. "Forbidden" means 403, from Kong.
+"Allowed" means the request got past Kong and the service's role checks: 200 for a payment or list,
+404 for the case id below, which doesn't exist, and 400 for a promotion that isn't signed. That
+proves access without resolving a real case or changing the model, so this can run as often as
+needed. "Forbidden" means 403, from Kong.
 Prints a Markdown table for docs/results/security.md; exit code 1 if anything differs.
 """
 
@@ -22,14 +23,20 @@ from load.credentials import credentials
 
 NO_CASE = 2_000_000_000   # no case has this id
 
+NOT_SIGNED = {"token": "not-a-signed-promotion"}   # model-admin-svc answers 400, changes nothing
+
 # (name, method, path, body, roles allowed): the roles table
 ROUTES = [
     ("Send a payment", "POST", "/v1/transactions/score", "payment", {"client"}),
     ("List cases", "GET", "/cases?limit=1", None, {"analyst", "admin"}),
     ("Read a case", "GET", f"/cases/{NO_CASE}", None, {"analyst", "admin"}),
     ("Resolve a case", "POST", f"/cases/{NO_CASE}/resolve", {"outcome": "fraud"}, {"analyst"}),
+    ("See the live model", "GET", "/v1/model", None, {"admin"}),
+    ("Model history", "GET", "/v1/model/history?limit=1", None, {"admin"}),
+    ("Promote a model", "POST", "/v1/model/promote", NOT_SIGNED, {"admin"}),
+    ("Roll back the model", "POST", "/v1/model/rollback", NOT_SIGNED, {"admin"}),
 ]
-ALLOWED = {200, 404}
+ALLOWED = {200, 400, 404}
 
 
 def payment():
