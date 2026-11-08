@@ -8,7 +8,9 @@ consumers:
 @@CONSUMERS@@
 services:
   - name: ingest
-    url: http://ingest-svc:8000
+    # ingest's pods directly (a headless Service on Kubernetes, an alias in compose), so Kong
+    # balances across them and stops using one that is leaving (docs/k8s.md)
+    url: http://ingest-pods:8000
     routes:
       - name: score
         paths: ["/v1/transactions"]

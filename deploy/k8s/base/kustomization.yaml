@@ -29,3 +29,4 @@ resources:
   - scoring.yaml
   - ingest.yaml
   - kong.yaml
+  - resilience.yaml

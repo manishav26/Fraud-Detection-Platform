@@ -103,8 +103,8 @@
     {
       "id": 3,
       "type": "timeseries",
-      "title": "Latency p50 / p95 / p99, by service",
-      "description": "",
+      "title": "Latency p95, by service",
+      "description": "p95 of each service's own answer time, over the last minute. Only services with at least 1 request every 10 s: for a rarely called route (a token, an admin call) one request's time would be its p95. Dashed line: the suggested Gate 2 target, 250 ms (docs/results/baseline.md).",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -112,12 +112,31 @@
       "gridPos": {
         "x": 0,
         "y": 8,
-        "w": 24,
+        "w": 12,
         "h": 8
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "s"
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.25
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -137,26 +156,69 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.5, sum by (le, service) (rate(http_request_duration_seconds_bucket[1m])))",
-          "legendFormat": "{{service}} p50"
+          "expr": "histogram_quantile(0.95, sum by (le, service) (rate(http_request_duration_seconds_bucket[1m]))) and on (service) sum by (service) (rate(http_requests_total[1m])) > 0.1",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Latency p99, by service",
+      "description": "p99 of each service's own answer time, over the last minute. Only services with at least 1 request every 10 s: for a rarely called route (a token, an admin call) one request's time would be its p99. Dashed line: the suggested Gate 2 target, 1.5 s (docs/results/baseline.md).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1.5
+              }
+            ]
+          }
         },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
         {
-          "refId": "B",
+          "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, service) (rate(http_request_duration_seconds_bucket[1m])))",
-          "legendFormat": "{{service}} p95"
-        },
-        {
-          "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.99, sum by (le, service) (rate(http_request_duration_seconds_bucket[1m])))",
-          "legendFormat": "{{service}} p99"
+          "expr": "histogram_quantile(0.99, sum by (le, service) (rate(http_request_duration_seconds_bucket[1m]))) and on (service) sum by (service) (rate(http_requests_total[1m])) > 0.1",
+          "legendFormat": "{{service}}"
         }
       ]
     },
@@ -593,6 +655,53 @@
       ]
     },
     {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Copies answering, by service (HPA scales scoring 2-8)",
+      "description": "Pods that answered Prometheus at least once in the last 30 s. One missed read under load (a busy pod answering /metrics late) doesn't count as a pod gone; a removed pod drops out within 30 s. scoring-svc's count rises when its HPA adds copies (docs/results/scaling.md). On compose every service has one copy.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "decimals": 0,
+          "custom": {
+            "axisSoftMax": 8
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count by (app) (max_over_time(up{app=~\"scoring-svc|ingest-svc|alert-svc|kong\"}[30s]) == 1)",
+          "legendFormat": "{{app}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
       "id": 12,
       "type": "timeseries",
       "title": "CPU per pod (cores)",
@@ -603,7 +712,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 56,
+        "y": 64,
         "w": 24,
         "h": 8
       },
@@ -645,7 +754,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 64,
+        "y": 72,
         "w": 12,
         "h": 8
       },
@@ -687,7 +796,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 64,
+        "y": 72,
         "w": 12,
         "h": 8
       },

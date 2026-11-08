@@ -5,6 +5,10 @@ metadata:
   name: ingest-svc
 spec:
   replicas: 2
+  # A new pod must be ready before an old one goes: rollouts never lower capacity
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
   selector:
     matchLabels: {app: ingest-svc}
   template:
@@ -24,9 +28,26 @@ spec:
             - {name: KAFKA_BOOTSTRAP, value: "redpanda:29092"}
           ports:
             - {name: http, containerPort: 8000}
-          readinessProbe:
-            tcpSocket: {port: 8000}
+          # Probes (docs/k8s.md). startup: time to connect and load before the others count;
+          # readiness: traffic only when it can answer; liveness: restart only if it stops
+          # answering for a minute, never for one slow burst
+          startupProbe:
+            httpGet: {path: /healthz, port: 8000}
             periodSeconds: 5
+            failureThreshold: 36   # up to 3 min: Redpanda may still be starting
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8000}
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          # Wait before shutting down: Kong refreshes ingest-pods' DNS every 5 s, so after 15 s it
+          # has stopped sending here, and nothing is on its way when the pod closes its connections
+          lifecycle:
+            preStop: {sleep: {seconds: 15}}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
@@ -34,11 +55,16 @@ spec:
             requests: {cpu: 250m, memory: 128Mi}
             limits: {memory: 512Mi}
 ---
+# Headless (no single Service address): the DNS name returns each ready pod's address, so Kong
+# balances across the pods itself and stops choosing one within the DNS cache time (5 s) of it
+# leaving. Through a normal Service address, Kong's reused connections stayed tied to a pod after
+# it left, and failed when it shut down (docs/results/scaling.md). Only Kong calls ingest.
 apiVersion: v1
 kind: Service
 metadata:
-  name: ingest-svc
+  name: ingest-pods
 spec:
+  clusterIP: None
   selector: {app: ingest-svc}
   ports:
     - {name: http, port: 8000}

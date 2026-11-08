@@ -90,7 +90,14 @@ async def lifespan(app):
 
 
 app = FastAPI(title="ingest-svc", lifespan=lifespan)
-instrument(app, "ingest-svc")
+def _ready():
+    # Redpanda producer started and the scoring client made (both at startup)
+    if getattr(app.state, "producer", None) is None or getattr(app.state, "http", None) is None:
+        return False, "still starting"
+    return True, ""
+
+
+instrument(app, "ingest-svc", ready=_ready)
 
 
 class Transaction(BaseModel):
@@ -116,8 +123,25 @@ def now():
     return datetime.now(UTC).isoformat()
 
 
+# A reused connection to a scoring pod that is shutting down can break mid-request (the pod
+# closed it). Trying once more opens a fresh connection to a live pod. Safe: scoring the same
+# payment again gives the same answer and writes the same history row. Timeouts are not retried:
+# that would only double a slow wait.
+BROKEN_CONNECTION = (httpx.ConnectError, httpx.ReadError, httpx.WriteError,
+                     httpx.RemoteProtocolError)
+SCORING_RETRIES = Counter("ingest_scoring_retries_total",
+                          "Scoring calls tried again after a broken connection")
+
+
 async def call_scoring(record):
-    r = await app.state.http.post("/score", json=record)
+    try:
+        r = await app.state.http.post("/score", json=record)
+    except BROKEN_CONNECTION as e:
+        SCORING_RETRIES.inc()
+        log.warning("scoring connection broke for %s (%s); trying once more",
+                    record["txn_id"], type(e).__name__)
+        r = await app.state.http.post("/score", json=record)
+    r.raise_for_status()
     return r.json()
 
 

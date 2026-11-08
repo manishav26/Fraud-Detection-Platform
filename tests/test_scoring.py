@@ -140,6 +140,33 @@ def test_deploy_pins_match_the_trained_model():
     scoring.verify_pins(folder, {f: env[v] for f, v in scoring.PIN_ENV.items()})
 
 
+# ---------- health (week 4, step 2) ----------
+
+def test_not_ready_until_model_and_cassandra_are_there():
+    state = scoring.app.state._state
+    saved = dict(state)
+    state.clear()   # as before startup has run
+    try:
+        client = TestClient(scoring.app)
+        r = client.get("/readyz")
+        assert r.status_code == 503 and "model" in r.json()["reason"]
+        assert client.get("/healthz").status_code == 200   # alive, just not ready
+        use_model(FakeModel())
+        assert "Cassandra" in client.get("/readyz").json()["reason"]
+        use_store(FakeStore())
+        assert client.get("/readyz").status_code == 200
+    finally:
+        state.clear()
+        state.update(saved)
+
+
+def test_cassandra_down_later_keeps_scoring_ready():
+    # Degraded answers beat errors: a broken store must not take scoring out of rotation
+    use_model(FakeModel())
+    use_store(FakeStore(broken=True))
+    assert TestClient(scoring.app).get("/readyz").status_code == 200
+
+
 # ---------- scoring a payment ----------
 
 def test_known_user_gets_history_and_is_saved(client):

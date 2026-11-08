@@ -6,6 +6,10 @@ metadata:
   name: grafana
 spec:
   replicas: 1
+  # A new pod must be ready before an old one goes: rollouts never lower capacity
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
   selector:
     matchLabels: {app: grafana}
   template:

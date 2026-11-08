@@ -7,6 +7,10 @@ metadata:
   name: alert-svc
 spec:
   replicas: 2
+  # A new pod must be ready before an old one goes: rollouts never lower capacity
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
   selector:
     matchLabels: {app: alert-svc}
   template:
@@ -27,9 +31,26 @@ spec:
             - secretRef: {name: alerts-credentials}   # ALERTS_DSN, with the `alerts` login
           ports:
             - {name: http, containerPort: 8000}
-          readinessProbe:
-            tcpSocket: {port: 8000}
+          # Probes (docs/k8s.md). startup: time to connect and load before the others count;
+          # readiness: traffic only when it can answer; liveness: restart only if it stops
+          # answering for a minute, never for one slow burst
+          startupProbe:
+            httpGet: {path: /healthz, port: 8000}
             periodSeconds: 5
+            failureThreshold: 36   # up to 3 min: Redpanda and Postgres may still be starting
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8000}
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          # Kong and the Service keep sending for a moment after a pod is told to stop; wait
+          # before shutting down so those requests are still answered (no 502s in a rollout)
+          lifecycle:
+            preStop: {sleep: {seconds: 5}}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}

@@ -96,4 +96,29 @@ of the Service and Kubernetes keeps restarting it.
 - Requests and limits on every container (one noisy pod can't starve the node; threat 7).
 - Our 3 services: no privilege escalation, all Linux capabilities dropped.
 - Kong admin API off.
+- Probes, an HPA, disruption budgets and zero-downtime rollouts: see "Scale and resilience" below.
 - Next (later weeks): NetworkPolicies (ST4), run as non-root, mTLS between services (ST3).
+
+## Scale and resilience (week 4, step 2)
+
+Manifests: probes and rollout settings in each Deployment, the HPA and disruption budgets in
+`deploy/k8s/base/resilience.yaml`. `tests/test_k8s_manifests.py` reads the YAML, so a later edit
+can't drop any of it. Results: `docs/results/scaling.md`.
+
+| What | Setting | Why |
+|---|---|---|
+| Startup probe | `GET /healthz`, up to 3 min for scoring, ingest, alert-svc | They wait for Cassandra, Redpanda or Postgres and load the model; the other probes don't count until then |
+| Readiness probe | `GET /readyz` every 5 s | A pod gets traffic only when it can answer: scoring has its model and Cassandra connection, ingest its Redpanda producer. Before, it was "the port is open" |
+| Liveness probe | `GET /healthz` every 10 s, 6 failures in a row | Restart only after a minute of silence. One slow burst (1-2 s, `docs/results/baseline.md`) must never restart a pod. `/healthz` is async, so it answers even while every worker thread is busy scoring |
+| Cassandra down | scoring stays ready | It still answers, degraded (`docs/scoring.md`); taking it out of rotation would turn those answers into errors |
+| Rollouts | `maxUnavailable: 0, maxSurge: 1` on every Deployment | A new pod must be ready before an old one goes, so a rollout never lowers capacity |
+| Pause before stopping | `preStop: sleep 5 s` on our services and Kong | Kong and the Service keep sending to a stopping pod for a moment; it answers them before it exits, instead of a 502 |
+| HPA on scoring | 2-8 copies at 60% of the CPU request; up after 15 s (2 copies per 30 s), down after 2 min (1 per minute) | Scales with load without flapping on short bursts. `replicas` is left out of the Deployment, or every apply would reset it to 2 |
+| Scoring CPU request | 500m (was 250m), no CPU limit | The 60% is a share of the request; at 250m it would scale at the baseline's normal 30/s. A CPU limit throttles the process when reached, which shows up as latency spikes, so memory is limited and CPU only requested |
+| Kong to ingest | a headless Service, `ingest-pods`; ingest pauses 15 s before stopping | Its DNS name returns each ready pod, so Kong balances across pods and stops choosing a leaving one within 5 s (the DNS cache). Through a normal Service address, Kong's reused connections stayed tied to a pod after it left and failed when it shut down: 16 errors when a drain evicted an ingest pod (`docs/results/scaling.md`) |
+| Ingest to scoring | one retry when a connection breaks (not after a timeout) | The same pinning between ingest and scoring; a fresh connection reaches a live pod. Safe because scoring a payment twice gives the same answer and history row. Counted in `ingest_scoring_retries_total` |
+| Keep-alive | our services keep idle connections 75 s (`uvicorn --timeout-keep-alive 75`), Kong 60 s (`KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT`) | Whoever reuses a connection must close it first. With uvicorn's default 5 s, Kong sometimes sent a payment on a connection uvicorn was closing: bursts of 502/500 (`docs/results/scaling.md`). `tests/test_k8s_manifests.py` checks the order |
+| Disruption budgets | `minAvailable: 1` for scoring, ingest, alert-svc | A node drain or upgrade keeps one copy of each running. Crashes are handled by the second copy and the probes |
+| Data stores | unchanged: one copy each, readiness only | Single copies with node-local disks; a liveness restart of Cassandra mid-compaction would do more harm than good. Their failure tests are week 5 |
+
+`make k8s-resilience TEST=scale` (also `kill`, `rollout`, `drain`) runs a test under real load.

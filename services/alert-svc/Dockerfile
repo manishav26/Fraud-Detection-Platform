@@ -6,4 +6,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY audit audit
 COPY observability observability
 COPY services/alert-svc/app app
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Keep idle connections 75 s, longer than Kong keeps them (60 s), so Kong always closes first.
+# uvicorn's default 5 s let Kong reuse a connection uvicorn was closing: a 502 (docs/k8s.md).
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "75"]

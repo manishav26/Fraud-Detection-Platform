@@ -139,3 +139,59 @@ def test_redpanda_down_gives_503_and_no_score(client, monkeypatch, broken):
     r = client.post("/v1/transactions/score", json=GOOD)
     assert r.status_code == 503
     assert background == []   # nothing to publish for a payment that wasn't decided
+
+
+# ---------- a scoring pod going away (week 4, step 2; docs/results/scaling.md) ----------
+
+SCORED = {"txn_id": "t1", "score": 0.12, "decision": "approve", "model_version": "stub-0",
+          "reasons": [], "cold_start": False}
+
+
+def scoring_that(*outcomes):
+    """A fake scoring-svc: each call takes the next outcome, an exception or a 200 answer."""
+    import httpx
+
+    calls = []
+
+    def handler(request):
+        outcome = outcomes[len(calls)]
+        calls.append(request)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return httpx.Response(200, json=SCORED)
+
+    return httpx.AsyncClient(base_url="http://scoring", transport=httpx.MockTransport(handler)), calls
+
+
+def test_broken_scoring_connection_is_tried_once_more():
+    import httpx
+
+    main.app.state.http, calls = scoring_that(httpx.RemoteProtocolError("closed"), "ok")
+    before = REGISTRY.get_sample_value("ingest_scoring_retries_total") or 0
+    assert asyncio.run(main.call_scoring({"txn_id": "t1"}))["decision"] == "approve"
+    assert len(calls) == 2
+    assert REGISTRY.get_sample_value("ingest_scoring_retries_total") == before + 1
+
+
+def test_scoring_is_not_retried_after_a_timeout():
+    import httpx
+
+    main.app.state.http, calls = scoring_that(httpx.ReadTimeout("slow"), "ok")
+    with pytest.raises(httpx.ReadTimeout):
+        asyncio.run(main.call_scoring({"txn_id": "t1"}))
+    assert len(calls) == 1   # retrying would only double a slow wait
+
+
+def test_a_crash_is_counted_as_a_500(monkeypatch):
+    async def broken(record):
+        raise RuntimeError("scoring connection broke twice")
+
+    monkeypatch.setattr(main, "call_scoring", broken)
+    main.app.state.producer = FakeProducer()
+    labels = {"service": "ingest-svc", "route": "/v1/transactions/score", "method": "POST",
+              "status": "500"}
+    before = REGISTRY.get_sample_value("http_requests_total", labels) or 0
+    r = TestClient(main.app, raise_server_exceptions=False).post("/v1/transactions/score",
+                                                                 json=GOOD)
+    assert r.status_code == 500
+    assert REGISTRY.get_sample_value("http_requests_total", labels) == before + 1

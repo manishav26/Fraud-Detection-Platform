@@ -15,4 +15,6 @@ COPY registry/__init__.py registry/signing.py registry/live_model.py registry/
 COPY config config
 COPY services/scoring-svc/app app
 # The model is not baked in: it is mounted at /models and checked against the pinned SHA-256.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Keep idle connections 75 s, longer than Kong keeps them (60 s), so Kong always closes first.
+# uvicorn's default 5 s let Kong reuse a connection uvicorn was closing: a 502 (docs/k8s.md).
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "75"]

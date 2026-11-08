@@ -169,7 +169,17 @@ def _model_now():
         MODEL.info({"version": live.current[1]})
 
 
-instrument(app, "scoring-svc", before_scrape=_model_now)
+def _ready():
+    # Model loaded and Cassandra connected (both happen at startup). A Cassandra outage later
+    # does not make scoring unready: it still answers, degraded, and that beats an error.
+    if getattr(app.state, "live", None) is None:
+        return False, "model not loaded yet"
+    if getattr(app.state, "store", None) is None:
+        return False, "Cassandra not connected yet"
+    return True, ""
+
+
+instrument(app, "scoring-svc", before_scrape=_model_now, ready=_ready)
 
 
 class ScoreRequest(BaseModel):

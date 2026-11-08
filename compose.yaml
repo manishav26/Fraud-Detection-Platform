@@ -87,6 +87,9 @@ services:
   ingest-svc:
     build: { context: ., dockerfile: services/ingest-svc/Dockerfile }
     image: fraud/ingest-svc:dev
+    networks:
+      default:
+        aliases: [ingest-pods]   # the name Kong uses, the same as on Kubernetes
     environment: { SCORING_URL: "http://scoring-svc:8000", KAFKA_BOOTSTRAP: "redpanda:29092" }
     depends_on: [scoring-svc, redpanda]
   alert-svc:  # opens cases from txn.scored. Design: docs/alerts.md
@@ -115,6 +118,8 @@ services:
       KONG_DECLARATIVE_CONFIG: /kong/kong.yml
       KONG_PROXY_LISTEN: 0.0.0.0:8000
       KONG_STATUS_LISTEN: 0.0.0.0:8100   # Kong's own metrics, not published to the laptop
+      # Shorter than our services' 75 s keep-alive, so Kong always closes first (docs/k8s.md)
+      KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT: "60"
     volumes: ["./deploy/kong:/kong:ro"]
     ports: ["8000:8000"]
     depends_on: [ingest-svc, token-issuer]

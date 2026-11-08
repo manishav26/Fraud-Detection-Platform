@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-apply k8s-update k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
+.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
 keys:
 	./scripts/gen_keys.sh
 
@@ -166,6 +166,12 @@ k8s-up:
 RESTART ?=
 k8s-apply:
 	./scripts/k8s_up.sh apply $(RESTART)
+
+# Scale and resilience tests under real load (docs/results/scaling.md), one at a time:
+#   make k8s-resilience TEST=scale     (also kill, rollout, drain; RERUN=1 for kill, drain again)
+TEST ?= scale
+k8s-resilience:
+	PYTHON=python RERUN=$(RERUN) ./scripts/resilience_test.sh $(TEST)
 
 # One of our services after a code change: rebuild, copy in, restart it (about a minute)
 #   make k8s-update SVC=model-admin-svc
