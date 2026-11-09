@@ -33,6 +33,10 @@ def test_reads_a_scored_message():
     assert msg.decision == "decline" and msg.reasons == ["C1=72 (+2.32)"]
 
 
+def test_probe_flag_is_read_and_defaults_to_false():
+    assert cases.parse(message(probe=True)).probe is True
+    assert cases.parse(message()).probe is False   # messages from before step 7c
+
 @pytest.mark.parametrize("bad", [b"not json", b"[]", message(ts="2017-12-10T10:00:00"),
                                  json.dumps({"txn_id": "t1"}).encode()])
 def test_unreadable_message_is_none(bad):

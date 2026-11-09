@@ -4,6 +4,7 @@ Flow per request (design: docs/ingest.md):
   1. FastAPI checks the body against the contract. Bad body -> copy to dlq.txn, return 422.
   2. Save the payment to txn.raw (acks=all, idempotent, key user_id). Fails -> 503, client retries.
   3. Ask scoring-svc for score and decision and return it right away (contract: 200 + decision).
+     Clients see only the decision (E6 defense D1); the test-only `tester` role sees it all.
   4. In the background, publish payment + decision to txn.scored, where alert-svc opens cases.
 """
 
@@ -114,9 +115,32 @@ class Decision(BaseModel):
     score: float
     decision: str
     model_version: str
-    reasons: list[str] = []  # up to 3 model reasons; empty when approved
+    reasons: list[str] = []  # up to 3 model reasons, plus probe detection's; empty when approved
     cold_start: bool = False  # true: no trusted history for this user (unknown or new)
     degraded: bool = False    # true: scored without history because Cassandra didn't answer
+    probe: bool = False       # true: probe detection (D3) turned an approval into a review
+
+
+class ShortDecision(BaseModel):
+    """What clients get (E6 defense D1, docs/scoring.md): the score and reasons would tell
+    someone probing the API which change brings a flagged payment closer to approval."""
+    txn_id: str
+    decision: str
+
+
+# Roles that get the full answer: only the test-only load-test client, so replay and load tests
+# can report scores, cold starts and degraded answers. Analysts see it all in cases. Anything
+# else, including a missing or unknown role, gets the short answer: a Kong mistake can't leak it.
+FULL_ANSWER_ROLES = {"tester"}
+
+
+def answer_for(groups_header, decision):
+    """The decision as the caller may see it, from the role Kong passes (X-Consumer-Groups).
+    Kong sets that header itself and replaces one the client sent (acl plugin)."""
+    groups = {g.strip() for g in (groups_header or "").split(",") if g.strip()}
+    if groups & FULL_ANSWER_ROLES:
+        return decision
+    return ShortDecision(txn_id=decision.txn_id, decision=decision.decision)
 
 
 def now():
@@ -179,7 +203,8 @@ async def send_to_dlq(request: Request, exc: RequestValidationError):
     return await request_validation_exception_handler(request, exc)
 
 
-@app.post("/v1/transactions/score", response_model=Decision)
+# No response_model: answer_for picks the shape per caller (a union would let FastAPI choose)
+@app.post("/v1/transactions/score", response_model=None)
 async def score_txn(txn: Transaction, request: Request):
     record = txn.model_dump(mode="json")
     start = time.perf_counter()
@@ -200,5 +225,6 @@ async def score_txn(txn: Transaction, request: Request):
         log.warning("slow %s: publish %.0f ms, scoring %.0f ms", txn.txn_id,
                     (published - start) * 1000, (done - published) * 1000)
     decision = Decision(**body)
+    # txn.scored keeps everything: alert-svc and the SIEM need it
     in_background(publish_scored(request.app.state.producer, record, decision.model_dump()))
-    return decision
+    return answer_for(request.headers.get("x-consumer-groups"), decision).model_dump()

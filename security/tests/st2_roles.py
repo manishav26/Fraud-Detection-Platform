@@ -28,7 +28,7 @@ NOT_SIGNED = {"token": "not-a-signed-promotion"}   # model-admin-svc answers 400
 
 # (name, method, path, body, roles allowed): the roles table
 ROUTES = [
-    ("Send a payment", "POST", "/v1/transactions/score", "payment", {"client"}),
+    ("Send a payment", "POST", "/v1/transactions/score", "payment", {"client", "tester"}),
     ("List cases", "GET", "/cases?limit=1", None, {"analyst", "admin"}),
     ("Read a case", "GET", f"/cases/{NO_CASE}", None, {"analyst", "admin"}),
     ("Resolve a case", "POST", f"/cases/{NO_CASE}/resolve", {"outcome": "fraud"}, {"analyst"}),
@@ -62,7 +62,7 @@ def main():
               if not k.startswith("_")}
     # One client per role, plus no token at all
     callers = {"no token": (None, None)}
-    for role in ("client", "analyst", "admin", "case-system"):
+    for role in ("client", "tester", "analyst", "admin", "case-system"):
         cid = next(c for c, r in roster.items() if r == role)
         callers[role] = (cid, role)
 

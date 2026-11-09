@@ -1113,6 +1113,48 @@
           "legendFormat": "{{pod}}"
         }
       ]
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "Probe detection: approvals held for review (per minute)",
+      "description": "E6 defense D3 (docs/scoring.md): approvals sent to review because the card had 5 or more model-flagged payments in the 24 h before. Near 0 in normal traffic; a burst is a card being probed",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 104,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(scoring_probe_holds_total[1m]))",
+          "legendFormat": "held"
+        }
+      ]
     }
   ],
   "templating": {

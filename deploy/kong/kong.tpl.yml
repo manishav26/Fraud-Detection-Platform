@@ -18,8 +18,11 @@ services:
         plugins:
           - name: jwt
             config: { claims_to_verify: [exp] }
+          # tester: the test-only load-test client, which also gets the full answer (ingest-svc,
+          # E6 defense D1). The acl plugin passes the role on in X-Consumer-Groups and replaces
+          # any such header the caller sent.
           - name: acl
-            config: { allow: [client] }
+            config: { allow: [client, tester] }
           # A payment is about 3 KB; anything far bigger is refused (413) before ingest reads it
           - name: request-size-limiting
             config: { allowed_payload_size: 16, size_unit: kilobytes }

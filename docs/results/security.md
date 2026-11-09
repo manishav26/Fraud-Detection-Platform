@@ -5,7 +5,7 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 | ID | Test | Result | Evidence |
 |----|------|--------|----------|
 | ST1 | Forged, expired, altered and `alg: none` tokens | **pass**: 1,000 of 1,000 got 401, none reached ingest (cluster) | below; `make k8s-st1` |
-| ST2 | Each role calls every route | **pass**: all 50 calls (10 routes, 5 callers, including the week 4 model and case-system routes) match the roles table (cluster, 9 Nov) | below; `make st2`; `docs/results/model_admin.md` |
+| ST2 | Each role calls every route | **pass**: all 60 calls (10 routes, 6 callers, including the week 4 model and case-system routes and the `tester` role) match the roles table (cluster, 10 Nov) | below; `make st2`; `docs/results/model_admin.md` |
 | ST3 | A pod outside the mesh, allowed by the network rules, calls scoring's `POST /score` | **pass** (cluster): refused with 403; the same call from a real, meshed ingest pod answered 200 | below; `make k8s-st3`; `docs/mtls.md` |
 | ST4 | Every workload and a pod with no labels try every pod and port | **pass** (cluster): only the allowed paths connect (25 since the SIEM); the intruder pod reaches nothing. Before the policies, every pod reached every port. Cassandra logins: scoring may only read and write its one table, and the old dev passwords are refused (12 of 12 checks) | below; `make k8s-st4`; `docs/network.md` |
 | ST5 | Schemathesis fuzzing | pending (week 5) | |
@@ -34,22 +34,26 @@ Each payment carried a bad token; `txn.raw` was counted before and after.
 
 All 1,000 refused with 401. `txn.raw`: 31,723 messages before and after, so none reached ingest.
 
-## ST2: roles (cluster, 9 Nov)
+## ST2: roles (cluster, 10 Nov)
 
-With the week 4 model routes (step 6) and the case-system routes and role (step 7):
+With the week 4 model routes (step 6), the case-system routes and role (step 7), and the test-only
+`tester` role (step 7c: the load-test client, which alone gets the full payment answer):
 
-| Route | no token | client | analyst | admin | case-system |
-|---|---|---|---|---|---|
-| Send a payment | 401 | 200 | 403 | 403 | 403 |
-| List cases | 401 | 403 | 200 | 200 | 403 |
-| Read a case | 401 | 403 | 404 | 404 | 403 |
-| Resolve a case | 401 | 403 | 404 | 403 | 403 |
-| Case status by payment | 401 | 403 | 404 | 403 | 404 |
-| Write back a decision | 401 | 403 | 403 | 403 | 404 |
-| See the live model | 401 | 403 | 403 | 200 | 403 |
-| Model history | 401 | 403 | 403 | 200 | 403 |
-| Promote a model | 401 | 403 | 403 | 400 | 403 |
-| Roll back the model | 401 | 403 | 403 | 400 | 403 |
+| Route | no token | client | tester | analyst | admin | case-system |
+|---|---|---|---|---|---|---|
+| Send a payment | 401 | 200 | 200 | 403 | 403 | 403 |
+| List cases | 401 | 403 | 403 | 200 | 200 | 403 |
+| Read a case | 401 | 403 | 403 | 404 | 404 | 403 |
+| Resolve a case | 401 | 403 | 403 | 404 | 403 | 403 |
+| Case status by payment | 401 | 403 | 403 | 404 | 403 | 404 |
+| Write back a decision | 401 | 403 | 403 | 403 | 403 | 404 |
+| See the live model | 401 | 403 | 403 | 403 | 200 | 403 |
+| Model history | 401 | 403 | 403 | 403 | 200 | 403 |
+| Promote a model | 401 | 403 | 403 | 403 | 400 | 403 |
+| Roll back the model | 401 | 403 | 403 | 403 | 400 | 403 |
+
+The tester role may only send payments, like a client. That it, and only it, gets the full
+answer is checked by `make k8s-probe-attack` (`docs/results/e6_live.md`).
 
 The case system can't reach the analyst or model routes, and analysts can't write back as the
 case system. 404 and 400 mean allowed (no such case; an unsigned promotion), so nothing real changes.

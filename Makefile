@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-siem k8s-siem-check k8s-spark-parity k8s-spark-throughput k8s-spark-logs spark-smoke k8s-linkerd st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
+.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-siem k8s-siem-check k8s-probe-attack k8s-spark-parity k8s-spark-throughput k8s-spark-logs spark-smoke k8s-linkerd st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
 keys:
 	./scripts/gen_keys.sh
 
@@ -291,6 +291,13 @@ k8s-siem:
 OUTAGE ?= 30
 k8s-siem-check:
 	python security/tests/siem_check.py --url http://localhost:8080 --outage $(OUTAGE)
+
+# E6 live (D1 and D3): merchant-1 probes the API with variants of flagged fraud payments; once a
+# card has 5 flagged answers, none may be approved. D3=off: the same with probe detection off for
+# the run (switched back on at the end). Writes about 150 payments to Cassandra. docs/scoring.md
+D3 ?= on
+k8s-probe-attack:
+	D3=$(D3) ./scripts/probe_attack.sh
 
 # Cases in the cluster's Postgres, by status and decision
 k8s-cases:

@@ -15,8 +15,13 @@ CREATE TABLE IF NOT EXISTS fraud.txn_by_user (
   p_emaildomain  text,
   device_type    text,
   product_cd     text,
+  flagged        boolean,   -- the model flagged it (review or decline): probe detection, D3
   PRIMARY KEY ((user_id), ts, txn_id)
 ) WITH CLUSTERING ORDER BY (ts ASC, txn_id ASC);
+
+-- Added in week 4 (step 7c, store/probe.py). Tables made before then get the column here; rows
+-- written without it (backfill, older scoring) count as not flagged.
+ALTER TABLE fraud.txn_by_user ADD IF NOT EXISTS flagged boolean;
 
 -- Written by the streaming feature job (week 4, step 1; docs/spark.md), read by the parity check
 -- and later by drift monitoring. Never read by scoring.

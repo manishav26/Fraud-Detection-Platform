@@ -47,7 +47,7 @@ class FakeModel:
 
 class FakeStore:
     def __init__(self, past=(), broken=False):
-        self.past_rows, self.broken, self.saved = list(past), broken, []
+        self.past_rows, self.broken, self.saved, self.rows = list(past), broken, [], []
 
     def past(self, user_id, ts, timeout=None):
         if self.broken:
@@ -58,6 +58,7 @@ class FakeStore:
         if self.broken:
             raise RuntimeError("Cassandra down")
         self.saved.append(txn["txn_id"])
+        self.rows.append(txn)
 
 
 @pytest.fixture
@@ -258,3 +259,66 @@ def test_normal_payment_is_not_degraded(client):
     use_store(FakeStore())
     assert client.post("/score", json=req(KNOWN)).json()["degraded"] is False
     assert client.post("/score", json=req(UNKNOWN)).json()["degraded"] is False
+
+
+# ---------- probe detection (E6 defense D3, store/probe.py) ----------
+
+T = 1_512_900_000.0   # 2017-12-10T10:00:00Z, the time of req()
+
+
+def flagged_past(n, hours_ago=1, flagged=True):
+    return [{"t": T - hours_ago * 3600 - i, "amount": 20.0, "P_emaildomain": "gmail.com",
+             "DeviceType": "mobile", "ProductCD": "W", "flagged": flagged} for i in range(n)]
+
+
+def test_approval_after_five_model_flags_goes_to_review(client):
+    store = use_store(FakeStore(flagged_past(5)))
+    use_model(FakeModel(prob=0.1))
+    holds = sample("scoring_probe_holds_total")
+    body = client.post("/score", json=req(KNOWN)).json()
+    assert body["decision"] == "review" and body["probe"] is True
+    assert body["reasons"][0] == scoring.PROBE_REASON
+    assert sample("scoring_probe_holds_total") == holds + 1
+    assert store.rows[-1]["flagged"] is False   # the model approved it: doesn't count itself
+
+
+def test_four_flags_or_old_flags_dont_hold(client):
+    use_model(FakeModel(prob=0.1))
+    use_store(FakeStore(flagged_past(4)))
+    assert client.post("/score", json=req(KNOWN)).json()["probe"] is False
+    use_store(FakeStore(flagged_past(5, hours_ago=25)))   # aged out of the 24 h window
+    assert client.post("/score", json=req(KNOWN)).json()["decision"] == "approve"
+
+
+def test_held_reviews_dont_count_toward_the_five(client):
+    use_store(FakeStore(flagged_past(5, flagged=False)))
+    use_model(FakeModel(prob=0.1))
+    assert client.post("/score", json=req(KNOWN)).json()["decision"] == "approve"
+
+
+def test_a_decline_stays_a_decline_and_is_saved_as_flagged(client):
+    store = use_store(FakeStore(flagged_past(5)))
+    use_model(FakeModel(prob=0.8))
+    body = client.post("/score", json=req(KNOWN)).json()
+    assert body["decision"] == "decline" and body["probe"] is False
+    assert store.rows[-1]["flagged"] is True
+
+
+def test_unknown_cards_and_degraded_mode_skip_probe_detection(client):
+    use_model(FakeModel(prob=0.1))
+    use_store(FakeStore(flagged_past(5)))
+    assert client.post("/score", json=req(UNKNOWN)).json()["probe"] is False
+    use_store(FakeStore(broken=True))
+    assert client.post("/score", json=req(KNOWN)).json()["decision"] == "approve"
+
+
+def test_probe_detection_can_be_switched_off(client, monkeypatch):
+    monkeypatch.setattr(scoring, "PROBE_DETECTION", False)
+    use_store(FakeStore(flagged_past(5)))
+    use_model(FakeModel(prob=0.1))
+    assert client.post("/score", json=req(KNOWN)).json()["decision"] == "approve"
+
+
+def test_deploy_config_switches_probe_detection_on():
+    env = (ROOT / "deploy/scoring.env").read_text()
+    assert "\nPROBE_DETECTION=on\n" in env

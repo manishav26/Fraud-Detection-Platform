@@ -76,19 +76,24 @@ paths:
                     M9: {type: string, nullable: true}
       responses:
         "200":
-          description: decision
+          description: >-
+            The decision. Clients (role client) get only txn_id and decision (E6 defense D1:
+            the score and reasons would help someone probing the API). The test-only role
+            tester (load-test) gets every field below; analysts see them in cases.
           content:
             application/json:
               schema:
                 type: object
+                required: [txn_id, decision]
                 properties:
                   txn_id: {type: string}
-                  score: {type: number}
                   decision: {type: string, enum: [approve, review, decline]}
+                  score: {type: number, description: "tester only, like every field below"}
                   model_version: {type: string, description: "model name plus the first 8 characters of its model.txt SHA-256, e.g. fraud-lgbm-v1-535eb73c; changes whenever the model's files change"}
-                  reasons: {type: array, items: {type: string}, description: "up to 3 features that raised the risk, e.g. C1=72 (+2.32); empty when approved"}
+                  reasons: {type: array, items: {type: string}, description: "up to 3 features that raised the risk, e.g. C1=72 (+2.32), after probe detection's reason when it held the payment; empty when approved"}
                   cold_start: {type: boolean, description: "true when the user has no trusted history (unknown id or first payment)"}
                   degraded: {type: boolean, description: "true when scored without history because the history store did not answer in time"}
+                  probe: {type: boolean, description: "true when probe detection (E6 defense D3) turned an approval into a review: 5 or more payments the model flagged on this card in the 24 h before"}
         "401": {description: missing or invalid token}
         "422": {description: body does not match this contract; a copy is kept in dlq.txn}
         "503": {description: could not record the transaction; retry with the same txn_id}

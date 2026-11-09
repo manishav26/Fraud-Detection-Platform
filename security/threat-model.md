@@ -19,7 +19,7 @@ defined in the plan; each needs a pass number saved in docs/results/security.md.
 | 11 | Tampered model file | registry, scoring | Attacker with registry or storage access | SHA-256 recorded at registration and checked at load against a value pinned in the deploy config, outside the model folder (`deploy/scoring.env`, week 2). A live change needs a signed promotion message carrying the hashes (`registry/`, week 3) | ST9 |
 | 12 | Attacker forces retrains or slowly shifts the data | drift-job | Attacker manipulating drift signals | Retrain cooldown, weekly retrain cap, golden-set comparison before promotion | ST14 |
 | 13 | Vulnerable or malicious dependency | build | Supply-chain attacker | Pinned versions, Trivy and pip-audit in CI, gitleaks | ST10 |
-| 14 | Attacker probes the API to learn what gets approved | scoring | Fraudster probing for approval rules | Hide scores from clients, query budget per client, probe detection | E6 |
+| 14 | Attacker probes the API to learn what gets approved | scoring | Fraudster probing for approval rules | Clients see only the decision (D1); probe detection per card: an approval after 5 model-flagged payments in 24 h goes to review (D3). No query budget: E6 showed it adds false positives and no protection once D3 is on (`docs/scoring.md`) | E6; `make k8s-probe-attack` |
 
 ## Test definitions
 | ID | Test | Pass condition |

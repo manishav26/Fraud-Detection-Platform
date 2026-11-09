@@ -56,8 +56,11 @@ def run_background():
     background.clear()
 
 
+TESTER = {"x-consumer-groups": "tester"}   # what Kong adds for the load-test client
+
+
 def test_good_payment_is_saved_then_decided(client):
-    r = client.post("/v1/transactions/score", json=GOOD)
+    r = client.post("/v1/transactions/score", json=GOOD, headers=TESTER)
     assert r.status_code == 200
     assert r.json()["decision"] == "approve" and r.json()["cold_start"] is True
     [(topic, key, value)] = main.app.state.producer.sent
@@ -195,3 +198,28 @@ def test_a_crash_is_counted_as_a_500(monkeypatch):
                                                                  json=GOOD)
     assert r.status_code == 500
     assert REGISTRY.get_sample_value("http_requests_total", labels) == before + 1
+
+
+# ---------- E6 defense D1: clients see only the decision ----------
+
+@pytest.mark.parametrize("groups", ["client", None, "", "analyst", "admin", "testers"])
+def test_clients_and_unknown_roles_get_only_the_decision(client, groups):
+    headers = {} if groups is None else {"x-consumer-groups": groups}
+    r = client.post("/v1/transactions/score", json=GOOD, headers=headers)
+    assert r.status_code == 200 and r.json() == {"txn_id": "t1", "decision": "approve"}
+
+
+@pytest.mark.parametrize("groups", ["tester", "client, tester"])
+def test_tester_gets_the_full_answer(client, groups):
+    body = client.post("/v1/transactions/score", json=GOOD,
+                       headers={"x-consumer-groups": groups}).json()
+    assert body["score"] == 0.12 and body["model_version"] == "stub-0"
+    assert body["probe"] is False and body["cold_start"] is True
+
+
+def test_txn_scored_keeps_the_full_answer_for_a_client(client):
+    client.post("/v1/transactions/score", json=GOOD, headers={"x-consumer-groups": "client"})
+    run_background()
+    [value] = [v for t, _, v in main.app.state.producer.sent if t == "txn.scored"]
+    assert value["score"] == 0.12 and value["model_version"] == "stub-0"
+    assert value["probe"] is False

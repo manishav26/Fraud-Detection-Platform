@@ -34,6 +34,7 @@ class Scored(BaseModel):
     model_version: str
     reasons: list[str] = []
     degraded: bool = False
+    probe: bool = False   # probe detection (D3) sent it to review; its reason is in `reasons`
 
 
 def parse(value):
@@ -58,7 +59,7 @@ async def open_case(conn, msg):
         case_id = row[0]
         await append_async(conn, ACTOR, "case_opened", f"case:{case_id}", {
             "txn_id": msg.txn_id, "decision": msg.decision, "score": msg.score,
-            "model_version": msg.model_version, "degraded": msg.degraded})
+            "model_version": msg.model_version, "degraded": msg.degraded, "probe": msg.probe})
     return case_id
 
 
