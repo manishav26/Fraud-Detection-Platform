@@ -7,13 +7,13 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 | ST1 | Forged, expired, altered and `alg: none` tokens | **pass**: 1,000 of 1,000 got 401, none reached ingest (cluster) | below; `make k8s-st1` |
 | ST2 | Each role calls every route | **pass**: all 32 calls (8 routes, including the week 4 model routes) match the roles table, compose and cluster | below; `make st2`; `docs/results/model_admin.md` |
 | ST3 | A pod outside the mesh, allowed by the network rules, calls scoring's `POST /score` | **pass** (cluster): refused with 403; the same call from a real, meshed ingest pod answered 200 | below; `make k8s-st3`; `docs/mtls.md` |
-| ST4 | Every workload and a pod with no labels try every pod and port | **pass** (cluster): only the 23 allowed paths connect; the intruder pod reaches nothing. Before the policies, every pod reached every port. Cassandra logins: scoring may only read and write its one table (10 of 10 checks) | below; `make k8s-st4`; `docs/network.md` |
+| ST4 | Every workload and a pod with no labels try every pod and port | **pass** (cluster): only the 23 allowed paths connect; the intruder pod reaches nothing. Before the policies, every pod reached every port. Cassandra logins: scoring may only read and write its one table, and the old dev passwords are refused (12 of 12 checks) | below; `make k8s-st4`; `docs/network.md` |
 | ST5 | Schemathesis fuzzing | pending (week 5) | |
 | ST6 | Injection strings | pending (week 5) | |
 | ST7 | One client floods against its limit | **limit: pass** (excess gets 429, held to ≤50/s). **Isolation: not shown on a laptop** (others' p95 +30% and +61% vs allowed traffic, within run-to-run noise); rerun on separate machines in week 5 | below; `make st7` |
 | ST8 | Edit an audit row by hand | **pass**: verify names the edited row | `docs/results/alerts.md` |
 | ST9 | Swap the model file | **pass**, compose and cluster | `docs/results/promotion.md` |
-| ST10 | CI scan | **pass** (laptop, 9 Nov; CI after push): no secrets in 80 commits, no known vulnerabilities in our pins, no unwaived HIGH/CRITICAL in config or images. First run found 4 HIGH CVEs in every image and 4 HIGH settings; fixed or waived with reasons | `docs/supply-chain.md`; `make scan` |
+| ST10 | CI scan | **pass** (laptop and CI, 9 Nov): no secrets in 80 commits, no known vulnerabilities in our pins, no unwaived HIGH/CRITICAL in config or images. First run found 4 HIGH CVEs in every image and 4 HIGH settings; fixed or waived with reasons. Cluster passwords: none left in git in the clear, none of the old dev ones work (9 of 9 checks) | `docs/supply-chain.md`, `docs/secrets.md`; `make scan`, `make k8s-secrets-check` |
 | ST11 | Raw user ids in logs and stored rows | pending (week 5) | |
 | ST12 | Replayed and old requests | pending (week 5) | |
 | ST13 | Label writes by the wrong service account | pending (week 5) | |
@@ -179,3 +179,22 @@ mesh's refusal is a 403 with an empty body; an app's 403 (RustFS to an unsigned 
 - A proper comparison (10 minutes, mesh against no mesh, same rows) belongs with week 5's ramp
   test.
 
+## Cluster passwords (k3d cluster, 9 Nov)
+
+Threat 13, with ST10. Before: the cluster's 8 passwords were the dev ones written in
+`scripts/k8s_up.sh`, and `make k8s-secrets-check` found them in 8 Secret values. After
+`make k8s-secrets` and `make k8s-up` (design: `docs/secrets.md`):
+
+| Check | Before | After |
+|---|---|---|
+| Secret values holding a dev password | 8 | **0** |
+| Postgres `fraud`, `mlflow`, `alerts`, `model_admin`: new password | (not set) | ok x 4 |
+| The same logins, old dev password | ok | **refused x 4** |
+| Cassandra `scoring`, `fraud_admin`: old dev password | ok | **refused x 2** (`make k8s-st4-db`) |
+| Cassandra `scoring`: still only its one table | 7 of 7 | 7 of 7 |
+
+The rotation broke nothing: the audit chain checked out with the new owner password
+(2,642 rows intact), the MLflow smoke test passed after RustFS restarted with its new key
+(upload, register, download through the alias), and a 300-payment replay got 300 answers of
+200, 0 degraded. Its latency (p95 1.7 s) was measured within 2 minutes of every pod restarting,
+which is the known warm-up effect (`docs/results/baseline.md`), not the passwords.
