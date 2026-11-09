@@ -128,4 +128,4 @@ within its first 4 tries isn't stopped (see the result above).
 
 ## Not done yet
 
-- User ids are stored as sent; HMAC pseudonyms (threat 8, ST11) come later.
+- User ids arrive here already pseudonymized by ingest (week 5, `docs/privacy.md`).

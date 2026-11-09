@@ -2,10 +2,11 @@
 
 Flow per request (design: docs/ingest.md):
   1. FastAPI checks the body against the contract. Bad body -> copy to dlq.txn, return 422.
-  2. Save the payment to txn.raw (acks=all, idempotent, key user_id). Fails -> 503, client retries.
-  3. Ask scoring-svc for score and decision and return it right away (contract: 200 + decision).
+  2. Replace the user id with its pseudonym (pseudonym.py): nothing after this sees the raw id.
+  3. Save the payment to txn.raw (acks=all, idempotent, key user_id). Fails -> 503, client retries.
+  4. Ask scoring-svc for score and decision and return it right away (contract: 200 + decision).
      Clients see only the decision (E6 defense D1); the test-only `tester` role sees it all.
-  4. In the background, publish payment + decision to txn.scored, where alert-svc opens cases.
+  5. In the background, publish payment + decision to txn.scored, where alert-svc opens cases.
 """
 
 import asyncio
@@ -27,6 +28,7 @@ from pydantic import AwareDatetime, BaseModel, Field
 
 from kafka_login import aiokafka_options
 from observability.http import BUCKETS, instrument
+from pseudonym import pseudonym
 
 SCORING_URL = os.getenv("SCORING_URL", "http://scoring-svc:8000")
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
@@ -191,10 +193,23 @@ def in_background(coroutine):
     task.add_done_callback(_background.discard)
 
 
+def scrub(body):
+    """A rejected body with its user id pseudonymized, when it is a JSON object with a text
+    user_id: the dead-letter queue is the one place raw input is kept. Anything else is kept as
+    sent (it may not even be JSON); docs/privacy.md lists that as a limit."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return body
+    if isinstance(data, dict) and isinstance(data.get("user_id"), str):
+        return json.dumps({**data, "user_id": pseudonym(data["user_id"])})
+    return body
+
+
 @app.exception_handler(RequestValidationError)
 async def send_to_dlq(request: Request, exc: RequestValidationError):
     """Keep a copy of every rejected body in dlq.txn, then answer 422 as FastAPI normally does."""
-    body = (await request.body()).decode(errors="replace")[:MAX_DLQ_BODY]
+    body = scrub((await request.body()).decode(errors="replace"))[:MAX_DLQ_BODY]
     errors = [{"loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
     try:
         await publish(request.app.state.producer, DLQ_TOPIC,
@@ -209,10 +224,14 @@ async def send_to_dlq(request: Request, exc: RequestValidationError):
 @app.post("/v1/transactions/score", response_model=None)
 async def score_txn(txn: Transaction, request: Request):
     record = txn.model_dump(mode="json")
+    # From here on the payment carries only the pseudonym: txn.raw, scoring, Cassandra, txn.scored,
+    # cases and the SIEM never see the raw id (threat 8, docs/privacy.md)
+    record["user_id"] = pseudonym(record["user_id"])
     start = time.perf_counter()
     try:
         # key = user_id: one user's payments go to one partition, so they stay in order
-        await publish(request.app.state.producer, RAW_TOPIC, record, key=txn.user_id.encode())
+        await publish(request.app.state.producer, RAW_TOPIC, record,
+                      key=record["user_id"].encode())
     except KafkaError:
         log.exception("could not save %s to %s", txn.txn_id, RAW_TOPIC)
         raise HTTPException(503, "could not record the transaction; retry with the same txn_id")

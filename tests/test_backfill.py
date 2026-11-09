@@ -69,3 +69,10 @@ def test_verify_stops_at_the_end_of_the_data():
     store = FakeStore({df["uid"].iloc[0]: 2})
     verify(store, df)
     assert store.asked_until == to_ts(86_461)   # later replay rows must not count
+
+
+def test_history_is_stored_under_the_pseudonyms_ingest_uses():
+    from pseudonym import is_pseudonym, pseudonym
+    df = known_rows(past_payments())
+    assert df["uid"].map(is_pseudonym).all()
+    assert df["uid"].iloc[0] == pseudonym("9500|204.0|0.0")   # card1|addr1|first-seen day

@@ -14,7 +14,7 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 | ST8 | Edit an audit row by hand | **pass**: verify names the edited row | `docs/results/alerts.md` |
 | ST9 | Swap the model file | **pass**, compose and cluster | `docs/results/promotion.md` |
 | ST10 | CI scan | **pass** (laptop and CI, 9 Nov): no secrets in 80 commits, no known vulnerabilities in our pins, no unwaived HIGH/CRITICAL in config or images. First run found 4 HIGH CVEs in every image and 4 HIGH settings; fixed or waived with reasons. Cluster passwords: none left in git in the clear, none of the old dev ones work (9 of 9 checks) | `docs/supply-chain.md`, `docs/secrets.md`; `make scan`, `make k8s-secrets-check` |
-| ST11 | Raw user ids in logs and stored rows | pending (week 5) | |
+| ST11 | Raw user ids in logs and stored rows | **pass** (cluster, 10 Nov): after a 500-payment replay, 0 raw or raw-shaped user ids in Cassandra's three tables, cases, the audit log, the three payment topics, the SIEM and every container's logs; every stored id is a pseudonym. Before: raw ids in all of them except the audit log, SIEM and logs | below; `make k8s-st11`; `docs/privacy.md` |
 | ST12 | Replayed and old requests | pending (week 5) | |
 | ST13 | Label writes by the wrong service account | pending (week 5) | |
 | ST14 | Forced drift alarms | pending (week 5, with Manisha) | |
@@ -196,6 +196,32 @@ kept reading, the feature job read all 4,000 payments sent since its restart, sc
 promotion, and no service logged a login or permission error.
 ST1 (1,000 of 1,000 refused; its `txn.raw` count now runs through `scripts/rpk.sh` as `admin`),
 ST4's network paths (unchanged) and ST2 (60 of 60) still passed afterwards.
+
+## ST11: personal data (k3d cluster, 10 Nov; `make k8s-st11`)
+
+Before week 5 the card's proxy id (e.g. `9500|204.0|98.0`) was stored as sent: in every message of
+`txn.raw`, `txn.scored` and `dlq.txn`, as the key of the three Cassandra tables, and in
+`cases.user_id`. Now ingest replaces it with an HMAC-SHA256 pseudonym before anything is stored
+(`docs/privacy.md`), and `make k8s-reset-data` removed the copies earlier runs had left.
+
+**Result:** after replaying 500 payments (421 user ids), ST11 found none of those raw ids and
+nothing raw-shaped in Cassandra (`txn_by_user`, `features_by_txn`, `user_features`), Postgres
+(`cases`, the audit log's details), Redpanda (every message in the three payment topics), the
+SIEM's events, or the logs of any container; and every stored user id has the pseudonym's shape.
+
+**Nothing else changed:** a 2,000-payment replay afterwards gave 840 cold starts against 837
+before the reset (the backfilled history, now pseudonymized, matches what ingest writes), the same
+decisions (1,969 / 6 / 25), and the Kafka permissions check passed again on the recreated topics
+(19 of 19).
+
+**Found on the way:** the first ST11 run was refused by Cassandra (`READ_TOO_MANY_TOMBSTONES`).
+The backfill stores each missing e-mail, device or product as an empty cell, which Cassandra
+keeps as a tombstone, and one unpaged read over the whole history passed its 100,000 limit. ST11
+now reads in pages. Writing missing values as "unset" instead would avoid the tombstones (and a
+little work on every history read); planned with the next backfill, on the VM.
+
+**Limit:** the payment's attributes (`card1`, `addr1`, ...) are model features and stay in the
+payment topics, readable by alert-svc and the feature job only (`docs/privacy.md`).
 
 ## ST3: mTLS with Linkerd (k3d cluster, 8 Nov)
 

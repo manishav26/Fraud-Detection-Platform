@@ -7,6 +7,8 @@ from app import main  # ingest-svc
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
+from pseudonym import is_pseudonym, pseudonym
+
 GOOD = {"txn_id": "t1", "user_id": "u1", "amount": 10, "ts": "2026-10-19T10:00:00Z",
         "attrs": {"card1": 1234, "ProductCD": "W"}}
 
@@ -64,7 +66,8 @@ def test_good_payment_is_saved_then_decided(client):
     assert r.status_code == 200
     assert r.json()["decision"] == "approve" and r.json()["cold_start"] is True
     [(topic, key, value)] = main.app.state.producer.sent
-    assert topic == "txn.raw" and key == b"u1"
+    assert topic == "txn.raw" and key == pseudonym("u1").encode()
+    assert value["user_id"] == pseudonym("u1") and value["user_id"] != "u1"
     assert value["txn_id"] == "t1" and value["attrs"]["card1"] == 1234
 
 
@@ -73,7 +76,8 @@ def test_decision_is_published_to_txn_scored_after_answering(client):
     assert [t for t, _, _ in main.app.state.producer.sent] == ["txn.raw"]   # not yet
     run_background()
     topic, key, value = main.app.state.producer.sent[1]
-    assert topic == "txn.scored" and key == b"u1"
+    assert topic == "txn.scored" and key == pseudonym("u1").encode()
+    assert value["user_id"] == pseudonym("u1")
     assert value["txn_id"] == "t1" and value["amount"] == 10.0          # the payment
     assert value["decision"] == "approve" and value["score"] == 0.12    # and its decision
     assert "reasons" in value and "degraded" in value and value["scored_at"]
@@ -120,8 +124,12 @@ def test_bad_payment_goes_to_dlq_and_gets_422(client, bad):
     r = client.post("/v1/transactions/score", json=bad)
     assert r.status_code == 422
     [(topic, key, value)] = main.app.state.producer.sent
-    assert topic == "dlq.txn" and key is None
-    assert json.loads(value["body"]) == bad and value["errors"]
+    assert topic == "dlq.txn" and key is None and value["errors"]
+    # the copy is kept, with only its user id pseudonymized (docs/privacy.md)
+    kept = json.loads(value["body"])
+    assert {k: v for k, v in kept.items() if k != "user_id"} == \
+        {k: v for k, v in bad.items() if k != "user_id"}
+    assert kept.get("user_id") == (pseudonym(bad["user_id"]) if "user_id" in bad else None)
 
 
 def test_not_json_goes_to_dlq(client):
@@ -223,3 +231,23 @@ def test_txn_scored_keeps_the_full_answer_for_a_client(client):
     [value] = [v for t, _, v in main.app.state.producer.sent if t == "txn.scored"]
     assert value["score"] == 0.12 and value["model_version"] == "stub-0"
     assert value["probe"] is False
+
+
+# ---------- pseudonyms (threat 8, docs/privacy.md) ----------
+
+def test_scoring_gets_only_the_pseudonym(client, monkeypatch):
+    seen = []
+
+    async def fake_scoring(record):
+        seen.append(record["user_id"])
+        return {"txn_id": record["txn_id"], "score": 0.1, "decision": "approve",
+                "model_version": "stub-0"}
+    monkeypatch.setattr(main, "call_scoring", fake_scoring)
+    client.post("/v1/transactions/score", json={**GOOD, "user_id": "9500|204.0|98.0"})
+    assert seen == [pseudonym("9500|204.0|98.0")] and is_pseudonym(seen[0])
+
+
+def test_a_bad_body_with_a_number_or_no_user_id_is_kept_as_sent(client):
+    body = {**GOOD, "user_id": 12345}   # not text: refused, and nothing to pseudonymize
+    client.post("/v1/transactions/score", json=body)
+    assert json.loads(main.app.state.producer.sent[0][2]["body"]) == body

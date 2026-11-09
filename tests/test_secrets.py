@@ -26,7 +26,7 @@ def k8s_recipes():
 
 
 def test_the_list_of_passwords_was_read():
-    assert len(NAMES) == 17 and {"POSTGRES_PASSWORD", "SIEM_TOKEN", "CASSANDRA_FEATURES_PASSWORD",
+    assert len(NAMES) == 18 and {"POSTGRES_PASSWORD", "SIEM_TOKEN", "CASSANDRA_FEATURES_PASSWORD",
                                  "REDPANDA_ADMIN_PASSWORD", "REDPANDA_TOOLS_PASSWORD"} <= set(NAMES)
 
 
