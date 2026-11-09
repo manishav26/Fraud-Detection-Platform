@@ -109,7 +109,14 @@ services:
       KAFKA_BOOTSTRAP: "redpanda:29092"
       # Its own login: may add cases and audit rows, never change the audit log
       ALERTS_DSN: "postgresql://alerts:alerts_dev_only@postgres:5432/fraud"
-    depends_on: [redpanda, postgres]
+      SIEM_URL: "http://siem-mock:8000"   # every audit row goes to the SIEM (docs/siem.md)
+      SIEM_TOKEN: siem_dev_only
+    depends_on: [redpanda, postgres, siem-mock]
+  siem-mock:  # stand-in for the security team's SIEM. View: http://localhost:8088
+    build: { context: ., dockerfile: services/siem-mock/Dockerfile }
+    image: fraud/siem-mock:dev
+    environment: { SIEM_TOKEN: siem_dev_only }
+    ports: ["127.0.0.1:8088:8000"]   # laptop only
   model-admin-svc:  # admin promote and rollback, each with an audit row. Design: docs/mlflow.md
     build: { context: ., dockerfile: services/model-admin-svc/Dockerfile }
     image: fraud/model-admin-svc:dev

@@ -11,7 +11,7 @@ GITLEAKS=zricethezav/gitleaks:v8.30.1
 TRIVY=aquasec/trivy:0.76.1
 PYTHON_IMAGE=python:3.11-slim   # the same base as our services
 PIP_AUDIT=2.10.1
-IMAGES=(token-issuer ingest-svc scoring-svc mlflow alert-svc model-admin-svc)
+IMAGES=(token-issuer ingest-svc scoring-svc mlflow alert-svc model-admin-svc siem-mock)
 CACHE="${TRIVY_CACHE:-$HOME/.cache/trivy}"   # its vulnerability database, kept between runs
 mkdir -p "$CACHE"
 WHAT=${1:-all}

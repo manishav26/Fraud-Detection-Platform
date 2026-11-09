@@ -159,6 +159,9 @@ spec:
     - to:  # cases, audit log
         - podSelector: {matchLabels: {app: postgres}}
       ports: [{protocol: TCP, port: 5432}, {protocol: TCP, port: 4143}]
+    - to:  # audit rows to the SIEM
+        - podSelector: {matchLabels: {app: siem-mock}}
+      ports: [{protocol: TCP, port: 8000}, {protocol: TCP, port: 4143}]
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -184,6 +187,25 @@ spec:
     - to:  # audit log
         - podSelector: {matchLabels: {app: postgres}}
       ports: [{protocol: TCP, port: 5432}, {protocol: TCP, port: 4143}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: siem-mock
+spec:
+  podSelector: {matchLabels: {app: siem-mock}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:  # audit rows to the SIEM
+        - podSelector: {matchLabels: {app: alert-svc}}
+      ports: [{protocol: TCP, port: 8000}, {protocol: TCP, port: 4143}]
+    - from:  # metrics
+        - podSelector: {matchLabels: {app: prometheus}}
+      ports: [{protocol: TCP, port: 8000}, {protocol: TCP, port: 4143}]
+    - from:  # its Linkerd proxy's metrics
+        - podSelector: {matchLabels: {app: prometheus}}
+      ports: [{protocol: TCP, port: 4191}]
+  egress: []   # may call nothing (DNS and mesh only, above)
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -315,6 +337,9 @@ spec:
       ports: [{protocol: TCP, port: 8000}, {protocol: TCP, port: 4143}]
     - to:  # metrics
         - podSelector: {matchLabels: {app: token-issuer}}
+      ports: [{protocol: TCP, port: 8000}, {protocol: TCP, port: 4143}]
+    - to:  # metrics
+        - podSelector: {matchLabels: {app: siem-mock}}
       ports: [{protocol: TCP, port: 8000}, {protocol: TCP, port: 4143}]
     - to:  # metrics
         - podSelector: {matchLabels: {app: kong}}

@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 from load.credentials import credentials
 
 NO_CASE = 2_000_000_000   # no case has this id
+NO_TXN = "st2-no-such-txn"   # no case for this transaction
 
 NOT_SIGNED = {"token": "not-a-signed-promotion"}   # model-admin-svc answers 400, changes nothing
 
@@ -31,6 +32,9 @@ ROUTES = [
     ("List cases", "GET", "/cases?limit=1", None, {"analyst", "admin"}),
     ("Read a case", "GET", f"/cases/{NO_CASE}", None, {"analyst", "admin"}),
     ("Resolve a case", "POST", f"/cases/{NO_CASE}/resolve", {"outcome": "fraud"}, {"analyst"}),
+    ("Case status by payment", "GET", f"/v1/cases/txn/{NO_TXN}", None, {"case-system", "analyst"}),
+    ("Write back a decision", "POST", f"/v1/cases/txn/{NO_TXN}/decision", {"outcome": "fraud"},
+     {"case-system"}),
     ("See the live model", "GET", "/v1/model", None, {"admin"}),
     ("Model history", "GET", "/v1/model/history?limit=1", None, {"admin"}),
     ("Promote a model", "POST", "/v1/model/promote", NOT_SIGNED, {"admin"}),
@@ -58,7 +62,7 @@ def main():
               if not k.startswith("_")}
     # One client per role, plus no token at all
     callers = {"no token": (None, None)}
-    for role in ("client", "analyst", "admin"):
+    for role in ("client", "analyst", "admin", "case-system"):
         cid = next(c for c, r in roster.items() if r == role)
         callers[role] = (cid, role)
 

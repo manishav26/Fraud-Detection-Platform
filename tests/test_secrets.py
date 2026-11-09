@@ -26,7 +26,7 @@ def k8s_recipes():
 
 
 def test_the_list_of_passwords_was_read():
-    assert len(NAMES) == 8 and "POSTGRES_PASSWORD" in NAMES
+    assert len(NAMES) == 9 and {"POSTGRES_PASSWORD", "SIEM_TOKEN"} <= set(NAMES)
 
 
 @pytest.mark.parametrize("path", ["scripts/k8s_up.sh", "scripts/k8s_secrets.sh",

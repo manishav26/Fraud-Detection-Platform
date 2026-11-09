@@ -52,6 +52,32 @@ services:
             config: { second: 10, limit_by: consumer, policy: local }
           - name: request-size-limiting
             config: { allowed_payload_size: 4, size_unit: kilobytes }
+      # The bank's case-management system (week 4, step 7; docs/siem.md), by transaction id:
+      # read a case's status (it and analysts), write back the decision (it alone).
+      - name: case-status
+        methods: [GET]
+        paths: ["~/v1/cases/txn/[^/]+$"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config: { claims_to_verify: [exp] }
+          - name: acl
+            config: { allow: [case-system, analyst] }
+          - name: rate-limiting
+            config: { second: 10, limit_by: consumer, policy: local }
+      - name: case-decision
+        methods: [POST]
+        paths: ["~/v1/cases/txn/[^/]+/decision$"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config: { claims_to_verify: [exp] }
+          - name: acl
+            config: { allow: [case-system] }
+          - name: rate-limiting
+            config: { second: 10, limit_by: consumer, policy: local }
+          - name: request-size-limiting
+            config: { allowed_payload_size: 4, size_unit: kilobytes }
   # Changing the live model: admin only (week 4, step 6; docs/mlflow.md). The body is a promotion
   # already signed on the admin's laptop, a few KB at most.
   - name: model-admin

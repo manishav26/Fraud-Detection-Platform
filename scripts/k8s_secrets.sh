@@ -21,6 +21,7 @@ SECRET_NAMES=(
   CASSANDRA_SCORING_PASSWORD   # Cassandra `scoring`: scoring-svc
   OBJECTSTORE_SECRET_KEY       # RustFS: MLflow's model files
   GRAFANA_ADMIN_PASSWORD       # Grafana `admin`
+  SIEM_TOKEN                   # alert-svc -> siem-mock (docs/siem.md)
 )
 # sops on macOS looks in ~/Library/Application Support by default; we keep the key here instead
 export SOPS_AGE_KEY_FILE="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}"

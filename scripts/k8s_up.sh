@@ -18,7 +18,7 @@ if [ -n "$(docker compose ps -q 2>/dev/null)" ]; then
   exit 1
 fi
 # Ours: built from this repo, so copied in on every full deploy. Each deployment has the same name.
-OURS=(token-issuer ingest-svc scoring-svc mlflow alert-svc model-admin-svc)
+OURS=(token-issuer ingest-svc scoring-svc mlflow alert-svc model-admin-svc siem-mock)
 PUBLIC=(kong:3.7 redpandadata/redpanda:v24.2.7 cassandra:4.1 postgres:16 rustfs/rustfs:latest
         prom/prometheus:v3.13.5 grafana/grafana:11.6.7)
 
@@ -164,6 +164,8 @@ secret alerts-credentials "ALERTS_DSN=postgresql://alerts:$ALERTS_DB_PASSWORD@po
 secret cassandra-credentials CASSANDRA_USER=scoring "CASSANDRA_PASSWORD=$CASSANDRA_SCORING_PASSWORD"
 # model-admin-svc's own login: may only read and add audit rows
 secret model-admin-credentials "MODEL_ADMIN_DSN=postgresql://model_admin:$MODEL_ADMIN_DB_PASSWORD@postgres:5432/fraud"
+# The SIEM's token: alert-svc presents it, siem-mock checks it (docs/siem.md)
+secret siem-credentials "SIEM_TOKEN=$SIEM_TOKEN"
 
 # RustFS reads its key only when it starts: restart it if the key changed
 if [ -n "$PREVIOUS_OBJECTSTORE_SECRET_KEY" ] && [ "$PREVIOUS_OBJECTSTORE_SECRET_KEY" != "$OBJECTSTORE_SECRET_KEY" ]; then
@@ -224,9 +226,9 @@ kubectl -n "$NS" create configmap secrets-fingerprint --from-literal=fingerprint
 # A full deploy restarts all of ours, so every pod reads the current config, image and
 # passwords. After the logins above, so no pod starts with a password the database doesn't know.
 kubectl -n "$NS" rollout restart deploy/token-issuer deploy/mlflow deploy/scoring-svc deploy/ingest-svc \
-  deploy/alert-svc deploy/model-admin-svc deploy/kong deploy/prometheus deploy/grafana
+  deploy/alert-svc deploy/model-admin-svc deploy/siem-mock deploy/kong deploy/prometheus deploy/grafana
 
 echo "5/5 wait for our services (they retry until Redpanda and Cassandra answer)"
-wait_for mlflow token-issuer scoring-svc ingest-svc alert-svc model-admin-svc kong prometheus grafana
+wait_for mlflow token-issuer scoring-svc ingest-svc alert-svc model-admin-svc siem-mock kong prometheus grafana
 kubectl -n "$NS" get pods -o wide
 echo "Gateway: http://localhost:8080"

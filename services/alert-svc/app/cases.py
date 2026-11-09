@@ -66,6 +66,10 @@ async def open_case(conn, msg):
 
 READ_ROLES = {"analyst", "admin"}   # the same as Kong's rules (deploy/kong/kong.tpl.yml)
 RESOLVE_ROLES = {"analyst"}
+# The bank's case-management system (week 4, step 7): reads a case's status and writes back the
+# decision, by transaction id. Analysts may read the same view.
+STATUS_ROLES = {"case-system", "analyst"}
+DECIDE_ROLES = {"case-system"}
 
 
 def has_role(groups_header, allowed):
@@ -77,6 +81,9 @@ def has_role(groups_header, allowed):
 COLUMNS = ("case_id, txn_id, user_id, amount, payment_ts, score, decision, reasons, model_version,"
            " degraded, opened_at, status, resolved_by, resolved_at, note")
 OUTCOMES = ("fraud", "not_fraud")
+# What the case system sees: enough to work the case, without the customer's id or the amount
+STATUS_COLUMNS = ("case_id, txn_id, status, decision, score, reasons, model_version, degraded,"
+                  " opened_at, resolved_by, resolved_at")
 
 
 class AlreadyResolved(Exception):
@@ -96,8 +103,15 @@ async def get_case(conn, case_id):
     return await cur.fetchone()
 
 
-async def resolve_case(conn, case_id, outcome, note, actor):
+async def get_status_by_txn(conn, txn_id):
+    cur = conn.cursor(row_factory=dict_row)
+    await cur.execute(f"SELECT {STATUS_COLUMNS} FROM cases WHERE txn_id = %s", (txn_id,))
+    return await cur.fetchone()
+
+
+async def resolve_case(conn, case_id, outcome, note, actor, extra=None):
     """Close an open case. The change and its audit row are saved together, or neither.
+    extra: more fields for the audit row (the case system's own ticket number).
 
     Returns the updated case, or None if there is no such case; raises AlreadyResolved.
     """
@@ -115,5 +129,18 @@ async def resolve_case(conn, case_id, outcome, note, actor):
                 return None
             raise AlreadyResolved(case_id)
         await append_async(conn, actor, "case_resolved", f"case:{case_id}", {
-            "txn_id": case["txn_id"], "outcome": outcome, "note": note})
+            "txn_id": case["txn_id"], "outcome": outcome, "note": note, **(extra or {})})
     return case
+
+
+async def resolve_by_txn(conn, txn_id, outcome, note, actor, external_ref=""):
+    """The case system's write-back: the same as an analyst resolving, found by txn_id.
+    Returns the case's status view, or None if no case exists; raises AlreadyResolved."""
+    cur = await conn.execute("SELECT case_id FROM cases WHERE txn_id = %s", (txn_id,))
+    row = await cur.fetchone()
+    if row is None:
+        return None
+    extra = {"external_ref": external_ref} if external_ref else None
+    if await resolve_case(conn, row[0], outcome, note, actor, extra) is None:
+        return None
+    return await get_status_by_txn(conn, txn_id)

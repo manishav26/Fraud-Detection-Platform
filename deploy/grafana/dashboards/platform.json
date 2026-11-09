@@ -797,6 +797,111 @@
       ]
     },
     {
+      "id": 20,
+      "type": "timeseries",
+      "title": "SIEM: how far behind (oldest unsent audit row)",
+      "description": "alert-svc sends every audit row to the SIEM (docs/siem.md). 0 = all sent; it grows while the SIEM is down and drops once it answers.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 72,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max(alerts_siem_lag_seconds)",
+          "legendFormat": "oldest unsent row waited",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A"
+        },
+        {
+          "expr": "max(siem_last_event_delay_seconds)",
+          "legendFormat": "delay of the last event the SIEM got",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "SIEM: events per second",
+      "description": "Sent by alert-svc, failed rounds, and what the mock SIEM did with them (stored, duplicate, refused).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 72,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(alerts_siem_events_sent_total[1m]))",
+          "legendFormat": "sent",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(alerts_siem_send_failures_total[1m]))",
+          "legendFormat": "failed rounds",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (outcome) (rate(siem_events_total[1m]))",
+          "legendFormat": "SIEM: {{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "C"
+        }
+      ]
+    },
+    {
       "id": 12,
       "type": "timeseries",
       "title": "CPU per pod (cores)",
@@ -807,7 +912,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 72,
+        "y": 80,
         "w": 24,
         "h": 8
       },
@@ -849,7 +954,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 80,
+        "y": 88,
         "w": 12,
         "h": 8
       },
@@ -891,7 +996,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 80,
+        "y": 88,
         "w": 12,
         "h": 8
       },

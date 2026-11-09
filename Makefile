@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-linkerd st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
+.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-siem k8s-siem-check k8s-linkerd st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
 keys:
 	./scripts/gen_keys.sh
 
@@ -258,6 +258,16 @@ k8s-alert-stats:
 	@for p in $$(kubectl -n fraud get pods -l app=alert-svc -o name); do \
 		echo "$$p $$(kubectl -n fraud exec $$p -- python -c "$(ALERT_COUNTS)")"; \
 	done
+
+# The mock SIEM's view: http://localhost:8088 until Ctrl+C (compose: always on 8088). docs/siem.md
+k8s-siem:
+	kubectl -n fraud port-forward service/siem-mock 8088:8000
+
+# SIEM hook end to end: a case system write-back shows up in the SIEM, and survives the SIEM being
+# down for OUTAGE seconds (0: skip that part). Resolves 1-2 real open cases. docs/siem.md
+OUTAGE ?= 30
+k8s-siem-check:
+	python security/tests/siem_check.py --url http://localhost:8080 --outage $(OUTAGE)
 
 # Cases in the cluster's Postgres, by status and decision
 k8s-cases:

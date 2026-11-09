@@ -23,12 +23,13 @@ flowchart LR
     scoring -->|5000| mlflow
     alert -->|29092| redpanda
     alert -->|5432| postgres[(postgres)]
+    alert -->|8000| siem[siem-mock]
     admin -->|29092| redpanda
     admin -->|5432| postgres
     mlflow -->|5432| postgres
     mlflow -->|9000| objectstore[(objectstore)]
     grafana -->|9090| prometheus
-    prometheus -.->|metrics| kong & ingest & scoring & alert & admin & token & redpanda
+    prometheus -.->|metrics| kong & ingest & scoring & alert & admin & token & siem & redpanda
 ```
 
 | From | To | Port | Why |
@@ -40,7 +41,7 @@ flowchart LR
 | scoring-svc | cassandra | 9042 | user history |
 | scoring-svc | redpanda | 29092 | model.events (promotions) |
 | scoring-svc | mlflow | 5000 | download a promoted model |
-| alert-svc | redpanda, postgres | 29092, 5432 | txn.scored; cases and the audit log |
+| alert-svc | redpanda, postgres, siem-mock | 29092, 5432, 8000 | txn.scored; cases and the audit log; audit rows to the SIEM (`docs/siem.md`) |
 | model-admin-svc | redpanda, postgres | 29092, 5432 | model.events; the audit log |
 | mlflow | postgres, objectstore | 5432, 9000 | the registry's database and files |
 | grafana | prometheus | 9090 | dashboard queries |

@@ -74,6 +74,7 @@ the tests' are. The chain links rows by hash, not by id, so gaps don't matter to
 ## Known limits
 
 - **Rows removed from the end aren't detected,** and someone with owner rights could rebuild the
-  whole chain. Both are caught by anchoring: saving the latest hash somewhere they can't reach.
-  Planned later.
-- The `alerts` password is a dev value in `platform.sql`. Secrets are week 4 work.
+  whole chain. Partly answered in week 4: every row and its hash also goes to the SIEM within
+  seconds (`docs/siem.md`), so the SIEM holds a copy of the chain the database owner can't edit.
+- The `alerts` password is a dev value in `platform.sql` for compose; the cluster's are random and
+  encrypted (`docs/secrets.md`).

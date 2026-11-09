@@ -17,7 +17,7 @@ makes it easy to poke at.
 | File | In git | What it is |
 |---|---|---|
 | `.sops.yaml` | yes | which file is encrypted for which age **public** key (it can only encrypt) |
-| `deploy/k8s/secrets.enc.env` | yes | the eight passwords; names in the clear, values encrypted (AES-256-GCM) |
+| `deploy/k8s/secrets.enc.env` | yes | the passwords and tokens; names in the clear, values encrypted (AES-256-GCM) |
 | `~/.config/sops/age/keys.txt` | **never** | the age private key; the only thing that can decrypt the file |
 | `scripts/gen_secrets.sh` | yes | makes the passwords and encrypts them (`make k8s-secrets`) |
 | `scripts/k8s_secrets.sh` | yes | decrypts into memory: for k8s-up, laptop tools (`run`), and `show` |
@@ -32,6 +32,7 @@ makes it easy to poke at.
 | `CASSANDRA_SCORING_PASSWORD` | Cassandra `scoring` | scoring-svc |
 | `OBJECTSTORE_SECRET_KEY` | RustFS | RustFS itself, MLflow |
 | `GRAFANA_ADMIN_PASSWORD` | Grafana `admin` | you, in the browser (`make k8s-password`) |
+| `SIEM_TOKEN` | the SIEM's collector token (week 4, step 7) | alert-svc sends with it, siem-mock checks it (`docs/siem.md`) |
 
 The token issuer's signing key and the clients' secrets are separate: `make keys` generates them
 into `keys/`, which isn't in git (`docs/access.md`). The promotion key stays on the laptop
@@ -93,8 +94,8 @@ its current password, which is still in the cluster's `cassandra-admin-credentia
 ## Tests
 
 - `tests/test_secrets.py`, in CI: no dev password in anything the cluster reads (`k8s_up.sh`,
-  `deploy/k8s/`, the `k8s-*` Make targets); k8s-up uses all eight and sets every Postgres login;
-  the encrypted file holds exactly the eight, all encrypted; a decrypted copy would be ignored by
+  `deploy/k8s/`, the `k8s-*` Make targets); k8s-up uses all of them and sets every Postgres login;
+  the encrypted file holds exactly those, all encrypted; a decrypted copy would be ignored by
   git. With sops installed, it also makes, keeps and rotates passwords with a throwaway key.
 - `make k8s-secrets-check`, on the running cluster: no Secret holds a dev password, and each
   Postgres login takes its new password and refuses its old dev one (over the pod's own address,

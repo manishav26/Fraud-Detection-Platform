@@ -69,5 +69,5 @@ def test_roster_has_every_role_and_the_two_merchants_st7_needs():
     import json
     roster = json.loads((ROOT / "deploy/clients.json").read_text())
     roles = {v for k, v in roster.items() if not k.startswith("_")}
-    assert roles == {"client", "analyst", "admin"}
+    assert roles == {"client", "analyst", "admin", "case-system"}
     assert roster["merchant-1"] == roster["merchant-2"] == roster["load-test"] == "client"

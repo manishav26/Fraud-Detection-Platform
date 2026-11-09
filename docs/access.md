@@ -36,16 +36,19 @@ plain SHA-256 is enough. Slow hashing (bcrypt, scrypt) is for passwords people c
 | `load-test` | client | replay and load tests. Will get a higher rate limit, as our tools send about 100/s |
 | `ana`, `ben` | analyst | working on cases |
 | `admin` | admin | reading cases; promoting and rolling back models (`make promote`, `make rollback`), which also needs the signing key on the laptop |
+| `case-mgmt` | case-system | the bank's case-management system: reads case status and writes back decisions by transaction id (week 4, step 7; `docs/siem.md`) |
 
 ## Roles table (ST2)
 
-| Route | client | analyst | admin | no token |
-|---|---|---|---|---|
-| `POST /v1/transactions/score` | yes | 403 | 403 | 401 |
-| `GET /cases`, `GET /cases/{id}` | 403 | yes | yes | 401 |
-| `POST /cases/{id}/resolve` | 403 | yes | 403 | 401 |
-| `GET /v1/model`, `GET /v1/model/history` | 403 | 403 | yes | 401 |
-| `POST /v1/model/promote`, `POST /v1/model/rollback` | 403 | 403 | yes | 401 |
+| Route | client | analyst | admin | case-system | no token |
+|---|---|---|---|---|---|
+| `POST /v1/transactions/score` | yes | 403 | 403 | 403 | 401 |
+| `GET /cases`, `GET /cases/{id}` | 403 | yes | yes | 403 | 401 |
+| `POST /cases/{id}/resolve` | 403 | yes | 403 | 403 | 401 |
+| `GET /v1/cases/txn/{txn_id}` | 403 | yes | 403 | yes | 401 |
+| `POST /v1/cases/txn/{txn_id}/decision` | 403 | 403 | 403 | yes | 401 |
+| `GET /v1/model`, `GET /v1/model/history` | 403 | 403 | yes | 403 | 401 |
+| `POST /v1/model/promote`, `POST /v1/model/rollback` | 403 | 403 | yes | 403 | 401 |
 | `POST /token` | needs a client id and secret | | | |
 
 **Enforced twice:**

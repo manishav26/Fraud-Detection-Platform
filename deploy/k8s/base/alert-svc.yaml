@@ -35,8 +35,10 @@ spec:
           imagePullPolicy: Never
           env:
             - {name: KAFKA_BOOTSTRAP, value: "redpanda:29092"}
+            - {name: SIEM_URL, value: "http://siem-mock:8000"}   # where the audit log goes (docs/siem.md)
           envFrom:
             - secretRef: {name: alerts-credentials}   # ALERTS_DSN, with the `alerts` login
+            - secretRef: {name: siem-credentials}     # SIEM_TOKEN
           ports:
             - {name: http, containerPort: 8000}
           # Probes (docs/k8s.md). startup: time to connect and load before the others count;
