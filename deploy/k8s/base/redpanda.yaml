@@ -17,6 +17,8 @@ spec:
         prometheus.io/port: "9644"
         prometheus.io/path: "/public_metrics"
     spec:
+      serviceAccountName: redpanda            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
       securityContext:
         fsGroup: 101   # the image's redpanda user can write to the disk
       containers:

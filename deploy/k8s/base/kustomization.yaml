@@ -16,6 +16,8 @@ kind: Kustomization
 namespace: fraud
 resources:
   - namespace.yaml
+  - serviceaccounts.yaml
+  - network.yaml
   - redpanda.yaml
   - cassandra.yaml
   - postgres.yaml

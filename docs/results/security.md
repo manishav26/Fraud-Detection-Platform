@@ -7,7 +7,7 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 | ST1 | Forged, expired, altered and `alg: none` tokens | **pass**: 1,000 of 1,000 got 401, none reached ingest (cluster) | below; `make k8s-st1` |
 | ST2 | Each role calls every route | **pass**: all 32 calls (8 routes, including the week 4 model routes) match the roles table, compose and cluster | below; `make st2`; `docs/results/model_admin.md` |
 | ST3 | Pod outside the mesh calls scoring directly | pending (week 4) | |
-| ST4 | ingest tries to reach Postgres | pending (week 4) | |
+| ST4 | Every workload and a pod with no labels try every pod and port | **pass** (cluster): only the 23 allowed paths connect; the intruder pod reaches nothing. Before the policies, every pod reached every port | below; `make k8s-st4`; `docs/network.md` |
 | ST5 | Schemathesis fuzzing | pending (week 5) | |
 | ST6 | Injection strings | pending (week 5) | |
 | ST7 | One client floods against its limit | **limit: pass** (excess gets 429, held to ≤50/s). **Isolation: not shown on a laptop** (others' p95 +30% and +61% vs allowed traffic, within run-to-run noise); rerun on separate machines in week 5 | below; `make st7` |
@@ -85,3 +85,34 @@ merchant-2 payment was answered.
   the flood sent from another machine.
 - **Next:** rerun in week 5 with the load sent from a separate machine (the rented VM planned for
   the Cassandra tests), and more repeats. Until then ST7's isolation half is open, not passed.
+
+## ST4: network isolation (k3d cluster, 8 Nov)
+
+Each source pod tries a TCP connection to another pod of every workload, on every port it listens
+on (15 targets). The "intruder" is a pod with no labels, standing in for a compromised pod.
+
+**Before the policies** (default Kubernetes: everything open): every source opened every port.
+For example token-issuer, which needs nothing, opened Cassandra, Postgres, Redpanda and RustFS;
+the intruder opened all 15, every database included.
+
+**After** (`deploy/k8s/base/network.yaml`):
+
+| From | Could open | Blocked |
+|---|---|---|
+| ingest-svc | scoring-svc:8000, redpanda:29092 | 13 of 15 |
+| scoring-svc | mlflow:5000, redpanda:29092, cassandra:9042 | 12 of 15 |
+| alert-svc | redpanda:29092, postgres:5432 | 13 of 15 |
+| model-admin-svc | redpanda:29092, postgres:5432 | 12 of 14 |
+| token-issuer | nothing | 14 of 14 |
+| mlflow | postgres:5432, objectstore:9000 | 12 of 14 |
+| intruder (no labels) | nothing | 15 of 15 |
+
+Exactly the paths in `security/tests/network_paths.py`. A copy can't reach its twin (scoring to
+the other scoring pod: blocked). 14 targets where a workload has one copy: a pod isn't tested
+against itself. Afterwards ST2 still passed (all 32 calls through Kong) and a replay of 300
+payments got 300 answers, so no allowed path was missed.
+
+Two test details found on the first run: k3s's enforcer **rejects** a blocked connection at once
+rather than dropping it, so a refusal counts as blocked (every port tried is listening); and a pod
+connecting to its own address never leaves the pod, so it is never a target for itself.
+

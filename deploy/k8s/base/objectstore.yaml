@@ -13,6 +13,8 @@ spec:
     metadata:
       labels: {app: objectstore}
     spec:
+      serviceAccountName: objectstore            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
       securityContext:
         fsGroup: 10001   # the image's rustfs user can write to the disk
       containers:

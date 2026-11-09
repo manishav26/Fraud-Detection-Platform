@@ -16,6 +16,8 @@ spec:
     metadata:
       labels: {app: grafana}
     spec:
+      serviceAccountName: grafana            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
       containers:
         - name: grafana
           # 11.6, not 13: Grafana 13's new storage and search index took over 7 CPU cores at

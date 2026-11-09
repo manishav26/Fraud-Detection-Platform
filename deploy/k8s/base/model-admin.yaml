@@ -22,6 +22,8 @@ spec:
         prometheus.io/port: "8000"
         prometheus.io/path: "/metrics"
     spec:
+      serviceAccountName: model-admin-svc            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
       containers:
         - name: model-admin-svc
           image: fraud/model-admin-svc:dev

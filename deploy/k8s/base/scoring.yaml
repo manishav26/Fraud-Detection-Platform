@@ -22,6 +22,8 @@ spec:
         prometheus.io/port: "8000"
         prometheus.io/path: "/metrics"
     spec:
+      serviceAccountName: scoring-svc            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
       containers:
         - name: scoring-svc
           image: fraud/scoring-svc:dev

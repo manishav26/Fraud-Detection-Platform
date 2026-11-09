@@ -13,6 +13,8 @@ spec:
     metadata:
       labels: {app: cassandra}
     spec:
+      serviceAccountName: cassandra            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
       containers:
         - name: cassandra
           image: cassandra:4.1

@@ -113,3 +113,56 @@ def test_kong_balances_across_ingest_pods_directly():
     # Kong refreshes the name every 5 s: the pod must keep answering longer than that
     pause = container(DEPLOYMENTS["ingest-svc"])["lifecycle"]["preStop"]["sleep"]["seconds"]
     assert pause >= 10
+
+
+# ---------- network isolation (week 4, step 3; docs/network.md) ----------
+
+from security.tests.network_paths import LISTENS, PATHS
+
+POLICIES = {d["metadata"]["name"]: d for d in DOCS if d["kind"] == "NetworkPolicy"}
+
+
+def test_everything_is_denied_unless_allowed():
+    deny = POLICIES["default-deny"]["spec"]
+    assert deny["podSelector"] == {} and set(deny["policyTypes"]) == {"Ingress", "Egress"}
+    assert "ingress" not in deny and "egress" not in deny
+
+
+def rules_of(policy, direction):
+    """{(peer app, port)} a policy allows in one direction."""
+    key, peer_key = ("ingress", "from") if direction == "in" else ("egress", "to")
+    found = set()
+    for rule in policy["spec"].get(key) or []:
+        for peer in rule.get(peer_key, []):
+            app = peer.get("podSelector", {}).get("matchLabels", {}).get("app")
+            for port in rule.get("ports", []):
+                if app:
+                    found.add((app, port["port"]))
+    return found
+
+
+@pytest.mark.parametrize("app", sorted(LISTENS))
+def test_each_policy_allows_exactly_the_table(app):
+    policy = POLICIES[app]
+    assert policy["spec"]["podSelector"] == {"matchLabels": {"app": app}}
+    assert rules_of(policy, "in") == {(s, p) for s, d, p, _ in PATHS if d == app}
+    assert rules_of(policy, "out") == {(d, p) for s, d, p, _ in PATHS if s == app}
+
+
+def test_only_kong_takes_traffic_from_anywhere():
+    for name, policy in POLICIES.items():
+        for rule in policy["spec"].get("ingress") or []:
+            if "from" not in rule:
+                assert name == "kong" and rule["ports"] == [{"protocol": "TCP", "port": 8000}]
+
+
+@pytest.mark.parametrize("kind", ["Deployment", "StatefulSet"])
+def test_every_pod_has_its_own_account_and_no_api_token(kind):
+    for d in DOCS:
+        if d["kind"] != kind:
+            continue
+        spec = d["spec"]["template"]["spec"]
+        name = d["spec"]["template"]["metadata"]["labels"]["app"]
+        assert spec.get("serviceAccountName") == name, name
+        if name != "prometheus":   # it reads the Kubernetes API
+            assert spec.get("automountServiceAccountToken") is False, name
