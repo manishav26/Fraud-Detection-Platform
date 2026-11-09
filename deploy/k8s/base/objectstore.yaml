@@ -17,6 +17,7 @@ spec:
       automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
       securityContext:
         fsGroup: 10001   # the image's rustfs user can write to the disk
+        seccompProfile: {type: RuntimeDefault}   # the runtime's default syscall filter (Trivy KSV-0118)
       containers:
         - name: objectstore
           image: rustfs/rustfs:latest

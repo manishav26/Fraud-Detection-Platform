@@ -24,6 +24,12 @@ spec:
     spec:
       serviceAccountName: scoring-svc            # its own identity (docs/network.md)
       automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:   # not root, and the runtime's default syscall filter (Trivy KSV-0118)
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: scoring-svc
           image: fraud/scoring-svc:dev
@@ -34,6 +40,7 @@ spec:
           ports:
             - {name: http, containerPort: 8000}
           volumeMounts:
+            - {name: tmp, mountPath: /tmp}   # the only writable place (scoring downloads models here)
             - {name: models, mountPath: /models, readOnly: true}
             - {name: promotion-key, mountPath: /promotion, readOnly: true}
           # Probes (docs/k8s.md). startup: time to connect and load before the others count;
@@ -59,6 +66,7 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true   # nothing in the image can be changed (Trivy KSV-0014)
           # The HPA's 60% target is a share of the CPU request. At the baseline's 30/s a pod used
           # 0.24-0.33 cores, so 250m would scale up at normal load. No CPU limit on purpose: a
           # limit pauses (throttles) the process when reached, which shows up as latency spikes
@@ -66,6 +74,8 @@ spec:
             requests: {cpu: 500m, memory: 256Mi}
             limits: {memory: 1Gi}
       volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
         - name: models
           hostPath: {path: /models, type: Directory}
         - name: promotion-key

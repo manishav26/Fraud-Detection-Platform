@@ -24,6 +24,12 @@ spec:
     spec:
       serviceAccountName: model-admin-svc            # its own identity (docs/network.md)
       automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:   # not root, and the runtime's default syscall filter (Trivy KSV-0118)
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: model-admin-svc
           image: fraud/model-admin-svc:dev
@@ -36,6 +42,7 @@ spec:
           ports:
             - {name: http, containerPort: 8000}
           volumeMounts:
+            - {name: tmp, mountPath: /tmp}   # the only writable place (scoring downloads models here)
             - {name: promotion-key, mountPath: /promotion, readOnly: true}
           # Probes (docs/k8s.md). startup: time to connect and load before the others count;
           # readiness: traffic only when it can answer; liveness: restart only if it stops
@@ -60,10 +67,13 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true   # nothing in the image can be changed (Trivy KSV-0014)
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {memory: 192Mi}
       volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
         - name: promotion-key
           configMap: {name: promotion-public-key}
 ---

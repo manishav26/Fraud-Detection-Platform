@@ -21,6 +21,7 @@ spec:
       automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
       securityContext:
         fsGroup: 101   # the image's redpanda user can write to the disk
+        seccompProfile: {type: RuntimeDefault}   # the runtime's default syscall filter (Trivy KSV-0118)
       containers:
         - name: redpanda
           image: redpandadata/redpanda:v24.2.7

@@ -247,3 +247,33 @@ def test_database_services_are_marked_opaque():
     for name, port in (("cassandra", "9042"), ("redpanda", "29092"), ("postgres", "5432")):
         svc = next(d for d in DOCS if d["kind"] == "Service" and d["metadata"]["name"] == name)
         assert svc["metadata"]["annotations"]["config.linkerd.io/opaque-ports"] == port
+
+
+# ---------- supply chain and pod hardening (week 4, step 5; docs/supply-chain.md) ----------
+
+@pytest.mark.parametrize("name", sorted(OURS))
+def test_our_services_run_as_non_root_on_a_read_only_filesystem(name):
+    pod = OURS[name]["spec"]["template"]["spec"]
+    assert pod["securityContext"]["runAsNonRoot"] is True
+    assert pod["securityContext"]["runAsUser"] == 10001
+    c = container(OURS[name])
+    assert c["securityContext"]["readOnlyRootFilesystem"] is True
+    assert c["securityContext"]["allowPrivilegeEscalation"] is False
+    assert {"name": "tmp", "mountPath": "/tmp"}.items() <= next(
+        m for m in c["volumeMounts"] if m["name"] == "tmp").items()
+    dockerfile = (BASE.parents[2] / "services" / name / "Dockerfile").read_text()
+    assert "USER 10001" in dockerfile
+
+
+@pytest.mark.parametrize("kind", ["Deployment", "StatefulSet"])
+def test_every_pod_uses_the_default_seccomp_filter(kind):
+    for d in DOCS:
+        if d["kind"] == kind:
+            ctx = d["spec"]["template"]["spec"]["securityContext"]
+            assert ctx["seccompProfile"] == {"type": "RuntimeDefault"}, d["metadata"]["name"]
+
+
+def test_every_image_gets_security_updates():
+    for dockerfile in (BASE.parents[2] / "services").glob("*/Dockerfile"):
+        text = dockerfile.read_text()
+        assert "apt-get upgrade" in text and "setuptools==" in text, dockerfile

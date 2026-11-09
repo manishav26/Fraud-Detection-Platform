@@ -1,0 +1,24 @@
+# Trivy waivers (week 4, step 5; docs/supply-chain.md). Each names the exact files and why. A
+# waiver covers only those files: the same finding anywhere else still fails the scan.
+misconfigurations:
+  - id: KSV-0014   # root file system is not read-only
+    paths:
+      - deploy/k8s/base/cassandra.yaml
+      - deploy/k8s/base/postgres.yaml
+      - deploy/k8s/base/redpanda.yaml
+      - deploy/k8s/base/objectstore.yaml
+      - deploy/k8s/base/kong.yaml
+      - deploy/k8s/base/grafana.yaml
+      - deploy/k8s/base/prometheus.yaml
+      - deploy/k8s/base/mlflow.yaml
+    statement: >-
+      Third-party images that write their own config and runtime files at start (Cassandra even
+      edits its config to turn logins on; Kong and Grafana write under their install folders;
+      MLflow keeps state in its home folder). Making each read-only means finding every such path
+      per image. Our five services are read-only.
+  - id: KSV-0047   # privilege escalation from node proxy
+    paths:
+      - deploy/k8s/base/prometheus.yaml
+    statement: >-
+      Prometheus reads each node's CPU and memory numbers (cAdvisor) through the API's node proxy:
+      a read-only GET on nodes/proxy, the standard way to scrape cAdvisor.

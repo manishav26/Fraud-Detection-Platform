@@ -23,6 +23,12 @@ spec:
     spec:
       serviceAccountName: alert-svc            # its own identity (docs/network.md)
       automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:   # not root, and the runtime's default syscall filter (Trivy KSV-0118)
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: alert-svc
           image: fraud/alert-svc:dev
@@ -53,12 +59,18 @@ spec:
           # before shutting down so those requests are still answered (no 502s in a rollout)
           lifecycle:
             preStop: {sleep: {seconds: 5}}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}   # the only writable place (scoring downloads models here)
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true   # nothing in the image can be changed (Trivy KSV-0014)
           resources:
             requests: {cpu: 100m, memory: 96Mi}
             limits: {memory: 256Mi}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
 ---
 apiVersion: v1
 kind: Service

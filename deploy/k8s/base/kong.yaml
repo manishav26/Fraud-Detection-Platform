@@ -22,6 +22,8 @@ spec:
     spec:
       serviceAccountName: kong            # its own identity (docs/network.md)
       automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}   # the runtime's default syscall filter (Trivy KSV-0118)
       containers:
         - name: kong
           image: kong:3.7

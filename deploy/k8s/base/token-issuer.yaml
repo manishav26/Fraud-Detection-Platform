@@ -20,6 +20,12 @@ spec:
     spec:
       serviceAccountName: token-issuer            # its own identity (docs/network.md)
       automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:   # not root, and the runtime's default syscall filter (Trivy KSV-0118)
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: token-issuer
           image: fraud/token-issuer:dev
@@ -30,6 +36,7 @@ spec:
           ports:
             - {name: http, containerPort: 8000}
           volumeMounts:
+            - {name: tmp, mountPath: /tmp}   # the only writable place (scoring downloads models here)
             - {name: keys, mountPath: /keys, readOnly: true}
             - {name: clients, mountPath: /clients, readOnly: true}   # hashed secrets only
           # Probes (docs/k8s.md). startup: time to connect and load before the others count;
@@ -55,14 +62,17 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true   # nothing in the image can be changed (Trivy KSV-0014)
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {memory: 256Mi}
       volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
         - name: keys
-          secret: {secretName: jwt-private-key}
+          secret: {secretName: jwt-private-key, defaultMode: 0440}   # its group only (fsGroup)
         - name: clients
-          secret: {secretName: issuer-clients}
+          secret: {secretName: issuer-clients, defaultMode: 0440}
 ---
 apiVersion: v1
 kind: Service

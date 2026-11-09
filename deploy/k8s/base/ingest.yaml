@@ -21,6 +21,12 @@ spec:
     spec:
       serviceAccountName: ingest-svc            # its own identity (docs/network.md)
       automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:   # not root, and the runtime's default syscall filter (Trivy KSV-0118)
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: ingest-svc
           image: fraud/ingest-svc:dev
@@ -50,12 +56,18 @@ spec:
           # has stopped sending here, and nothing is on its way when the pod closes its connections
           lifecycle:
             preStop: {sleep: {seconds: 15}}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}   # the only writable place (scoring downloads models here)
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true   # nothing in the image can be changed (Trivy KSV-0014)
           resources:
             requests: {cpu: 250m, memory: 128Mi}
             limits: {memory: 512Mi}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
 ---
 # Headless (no single Service address): the DNS name returns each ready pod's address, so Kong
 # balances across the pods itself and stops choosing one within the DNS cache time (5 s) of it

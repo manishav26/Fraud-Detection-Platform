@@ -11,3 +11,22 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: make lint
       - run: make test
+
+  # Supply-chain scans (week 4, step 5; ST10; docs/supply-chain.md): the same script as
+  # `make scan` on a laptop, so both always run the same checks with the same pinned tools.
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gitleaks reads every commit, not only the latest
+      - name: secrets in the whole history (gitleaks)
+        run: ./scripts/scan.sh secrets
+      - name: known vulnerabilities in our pinned packages (pip-audit)
+        run: ./scripts/scan.sh deps
+      - name: risky settings in Dockerfiles and Kubernetes YAML (Trivy)
+        run: ./scripts/scan.sh config
+      - name: build our images
+        run: docker compose build token-issuer ingest-svc scoring-svc mlflow alert-svc model-admin-svc
+      - name: fixable HIGH and CRITICAL vulnerabilities in the images (Trivy)
+        run: ./scripts/scan.sh images

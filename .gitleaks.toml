@@ -1,0 +1,4 @@
+# gitleaks settings (week 4, step 5; docs/supply-chain.md). Start from gitleaks' own rules, then
+# waive only what is known and harmless, each with its reason.
+[extend]
+useDefault = true

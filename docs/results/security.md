@@ -13,7 +13,7 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 | ST7 | One client floods against its limit | **limit: pass** (excess gets 429, held to ≤50/s). **Isolation: not shown on a laptop** (others' p95 +30% and +61% vs allowed traffic, within run-to-run noise); rerun on separate machines in week 5 | below; `make st7` |
 | ST8 | Edit an audit row by hand | **pass**: verify names the edited row | `docs/results/alerts.md` |
 | ST9 | Swap the model file | **pass**, compose and cluster | `docs/results/promotion.md` |
-| ST10 | CI scan | pending (week 4) | |
+| ST10 | CI scan | **pass** (laptop, 9 Nov; CI after push): no secrets in 80 commits, no known vulnerabilities in our pins, no unwaived HIGH/CRITICAL in config or images. First run found 4 HIGH CVEs in every image and 4 HIGH settings; fixed or waived with reasons | `docs/supply-chain.md`; `make scan` |
 | ST11 | Raw user ids in logs and stored rows | pending (week 5) | |
 | ST12 | Replayed and old requests | pending (week 5) | |
 | ST13 | Label writes by the wrong service account | pending (week 5) | |
