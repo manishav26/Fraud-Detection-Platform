@@ -23,6 +23,10 @@ models/
 
 # Secrets
 .env
+# Decrypted cluster passwords must never be saved; only secrets.enc.env goes in git
+deploy/k8s/*.env
+!deploy/k8s/secrets.enc.env
+keys.txt
 
 # Editor and OS files
 .vscode/

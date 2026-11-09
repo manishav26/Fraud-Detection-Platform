@@ -47,5 +47,5 @@ keeps the seccomp filter, and every image keeps the security updates.
 - **The 8 third-party images keep writable filesystems** (waived above).
 - **`rustfs/rustfs:latest`** is the one image without a version tag; Trivy reports it below HIGH.
   Pinning it is a small follow-up.
-- Secrets in the cluster are still dev passwords written in scripts: part B of this step moves
-  them to encrypted files (SOPS with age).
+- The cluster's passwords are covered separately: random, and in git only encrypted with SOPS
+  and age (part B, `docs/secrets.md`).

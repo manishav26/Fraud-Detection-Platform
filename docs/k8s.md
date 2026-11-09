@@ -61,6 +61,7 @@ survives a pod restart. Two things to know:
 | Secret `jwt-private-key` | `keys/private.pem` (not in git) | token-issuer |
 | ConfigMap `kong-config` | `deploy/kong/kong.yml` (made by `gen_keys.sh`) | kong |
 | ConfigMap `scoring-config` | `deploy/scoring.env`: model path, **model pins**, Cassandra host | scoring-svc |
+| Secrets `*-credentials`, `grafana-admin` | `deploy/k8s/secrets.enc.env`, decrypted in memory (`docs/secrets.md`) | databases, our services, MLflow, Grafana |
 
 `make k8s-up` creates these with `kubectl create ... --dry-run=client -o yaml | kubectl apply`
 (so it is safe to run again) because Kustomize can only read files inside `deploy/k8s/`.
@@ -97,7 +98,8 @@ of the Service and Kubernetes keeps restarting it.
 - Our 3 services: no privilege escalation, all Linux capabilities dropped.
 - Kong admin API off.
 - Probes, an HPA, disruption budgets and zero-downtime rollouts: see "Scale and resilience" below.
-- Next (later weeks): NetworkPolicies (ST4), run as non-root, mTLS between services (ST3).
+- Since then: NetworkPolicies (ST4, `docs/network.md`), mTLS (ST3, `docs/mtls.md`), non-root and
+  read-only filesystems (`docs/supply-chain.md`), encrypted passwords (`docs/secrets.md`).
 
 ## Scale and resilience (week 4, step 2)
 

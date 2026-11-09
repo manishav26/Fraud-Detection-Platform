@@ -7,6 +7,9 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 CQLSH="${CQLSH:-docker compose exec -T cassandra cqlsh}"
+# Compose: the dev passwords. Cluster: `make k8s-st4-db` passes the encrypted ones (docs/secrets.md)
+SCORING="${CASSANDRA_SCORING_PASSWORD:-scoring_dev_only}"
+ADMIN="${CASSANDRA_ADMIN_PASSWORD:-fraud_admin_dev_only}"
 FAILED=0
 printf '| Login | Statement | Expected | Got |\n|---|---|---|---|\n'
 
@@ -24,16 +27,21 @@ check() {   # check <user> <password> <expect: ok|refused> <statement>
 }
 
 ROW_CHECK="SELECT txn_id FROM fraud.txn_by_user LIMIT 1"
-check scoring scoring_dev_only ok "$ROW_CHECK"
-check scoring scoring_dev_only refused "SELECT role FROM system_auth.roles"
-check scoring scoring_dev_only refused "CREATE TABLE fraud.st4_probe (id int PRIMARY KEY)"
-check scoring scoring_dev_only refused "DROP TABLE fraud.txn_by_user"
-check scoring scoring_dev_only refused "CREATE KEYSPACE st4_probe WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"
-check scoring scoring_dev_only refused "CREATE ROLE st4_probe WITH PASSWORD = 'x' AND LOGIN = true"
-check scoring scoring_dev_only refused "GRANT SELECT ON ALL KEYSPACES TO scoring"
+check scoring "$SCORING" ok "$ROW_CHECK"
+check scoring "$SCORING" refused "SELECT role FROM system_auth.roles"
+check scoring "$SCORING" refused "CREATE TABLE fraud.st4_probe (id int PRIMARY KEY)"
+check scoring "$SCORING" refused "DROP TABLE fraud.txn_by_user"
+check scoring "$SCORING" refused "CREATE KEYSPACE st4_probe WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+check scoring "$SCORING" refused "CREATE ROLE st4_probe WITH PASSWORD = 'x' AND LOGIN = true"
+check scoring "$SCORING" refused "GRANT SELECT ON ALL KEYSPACES TO scoring"
 check scoring wrong_password refused "$ROW_CHECK"
 check cassandra cassandra refused "$ROW_CHECK"
-check fraud_admin fraud_admin_dev_only ok "$ROW_CHECK"
+check fraud_admin "$ADMIN" ok "$ROW_CHECK"
+# With the encrypted passwords in use, the dev ones written in this repo must no longer work
+if [ "$SCORING" != scoring_dev_only ]; then
+  check scoring scoring_dev_only refused "$ROW_CHECK"
+  check fraud_admin fraud_admin_dev_only refused "$ROW_CHECK"
+fi
 
 if [ "$FAILED" -ne 0 ]; then
   echo; echo "ST4 (database logins) FAILED"; exit 1

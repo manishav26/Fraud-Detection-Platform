@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-linkerd st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
+.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-linkerd st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
 keys:
 	./scripts/gen_keys.sh
 
@@ -66,10 +66,15 @@ k8s-st4:
 
 # ST4, database logins: Cassandra's scoring login may only read and write its one table
 k8s-st4-db:
-	CQLSH="kubectl -n fraud exec -i cassandra-0 -- cqlsh" ./security/tests/st4_cassandra_logins.sh
+	./scripts/k8s_secrets.sh run env CQLSH="kubectl -n fraud exec -i cassandra-0 -- cqlsh" ./security/tests/st4_cassandra_logins.sh
 
 st4-db:
 	./security/tests/st4_cassandra_logins.sh
+
+# After make k8s-up: no dev password left in the cluster's Secrets; each Postgres login takes
+# only its encrypted password (docs/secrets.md)
+k8s-secrets-check:
+	./security/tests/secrets_check.sh
 
 # ST2: every role calls every route and is checked against the roles table (docs/access.md)
 st2:
@@ -186,6 +191,16 @@ cluster-down:
 k8s-up:
 	./scripts/k8s_up.sh
 
+# The cluster's passwords, encrypted in git (docs/secrets.md). Adds missing ones; ROTATE=1 makes
+# all new. Then `make k8s-up` changes the logins. One password: make k8s-password NAME=...
+ROTATE ?=
+k8s-secrets:
+	ROTATE=$(ROTATE) ./scripts/gen_secrets.sh
+
+NAME ?= GRAFANA_ADMIN_PASSWORD
+k8s-password:
+	@./scripts/k8s_secrets.sh show $(NAME)
+
 # Config maps, secrets and YAML only, no images (steps like HPA or NetworkPolicies). Pods whose
 # YAML changed restart by themselves; RESTART lists ones that must re-read changed config:
 #   make k8s-apply                    make k8s-apply RESTART="kong scoring-svc"
@@ -227,10 +242,10 @@ k8s-model-history:
 
 # Load days 1-109 into the cluster's Cassandra, through a tunnel
 k8s-backfill:
-	./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.backfill
+	./scripts/k8s_secrets.sh run ./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.backfill
 
 k8s-verify-audit:
-	./scripts/k8s_tunnel.sh service/postgres=5432:5432 -- python -m audit.verify
+	./scripts/k8s_secrets.sh run ./scripts/k8s_tunnel.sh service/postgres=5432:5432 -- python -m audit.verify
 
 k8s-st8-tamper:
 	kubectl -n fraud exec -i postgres-0 -- psql -U fraud -d fraud -v ON_ERROR_STOP=1 -v row=$(ROW) -v actor=attacker < security/tests/st8_tamper_audit.sql
@@ -249,13 +264,14 @@ k8s-cases:
 	kubectl -n fraud exec postgres-0 -- psql -U fraud -d fraud -c "SELECT status, decision, count(*) FROM cases GROUP BY 1, 2 ORDER BY 1, 2"
 
 k8s-read-timing:
-	./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.read_timing
+	./scripts/k8s_secrets.sh run ./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.read_timing
 
 # ST9 attack on the cluster: change a registered model's file behind MLflow's back
 k8s-st9-tamper:
 	kubectl -n fraud exec -i deploy/mlflow -- python - $(VERSION) < security/tests/st9_tamper_artifact.py
 
-# The dashboard: http://localhost:3000 (admin / grafana_dev_only) until Ctrl+C. docs/metrics.md
+# The dashboard: http://localhost:3000 until Ctrl+C. docs/metrics.md
+# Log in as admin; password: make k8s-password (compose: grafana_dev_only)
 k8s-grafana:
 	kubectl -n fraud port-forward service/grafana 3000:3000
 

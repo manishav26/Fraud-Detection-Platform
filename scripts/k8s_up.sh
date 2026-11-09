@@ -5,6 +5,8 @@
 #   scripts/k8s_up.sh apply [deploy...]  config maps, secrets and YAML only (no images); then
 #                                        restarts the listed deployments, which read the config
 #   scripts/k8s_up.sh update <service>   rebuild one of our images, copy it in, restart it
+# Passwords come from deploy/k8s/secrets.enc.env (make k8s-secrets; needs sops and your age key).
+# A full deploy also changes the database logins to match them (docs/secrets.md).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -99,6 +101,25 @@ fi
 
 echo "2/5 secret and config maps (from files that are not in git or live outside deploy/k8s)"
 apply() { kubectl apply -f -; }
+# The passwords, decrypted into memory only (docs/secrets.md)
+# shellcheck source=scripts/k8s_secrets.sh
+source scripts/k8s_secrets.sh
+load_secrets
+secret_value() {   # secret_value <secret> <key>: what the cluster has now, empty if nothing
+  kubectl -n "$NS" get secret "$1" -o "jsonpath={.data.$2}" 2>/dev/null | base64 -d 2>/dev/null || true
+}
+# A fingerprint of the passwords the logins were last changed to. Not secret: a SHA-256 of 192-bit
+# random values. Lets `apply` refuse when the file has new passwords the logins don't have yet.
+FINGERPRINT=$(decrypt_secrets | shasum -a 256 | cut -c1-16)
+APPLIED=$(kubectl -n "$NS" get configmap secrets-fingerprint -o jsonpath='{.data.fingerprint}' 2>/dev/null || true)
+if [ "$MODE" = apply ] && [ "$APPLIED" != "$FINGERPRINT" ]; then
+  echo "The passwords in $SECRETS_FILE aren't the ones the logins were last set to (or never" >&2
+  echo "were), and only a full deploy changes the logins. Run: make k8s-up" >&2
+  exit 1
+fi
+# Before a rotation: what the cluster has now, so the old logins can still be used to change them
+PREVIOUS_CASSANDRA_ADMIN_PASSWORD=$(secret_value cassandra-admin-credentials CASSANDRA_ADMIN_PASSWORD)
+PREVIOUS_OBJECTSTORE_SECRET_KEY=$(secret_value objectstore-credentials RUSTFS_SECRET_KEY)
 kubectl create namespace "$NS" --dry-run=client -o yaml | apply
 kubectl -n "$NS" create secret generic jwt-private-key \
   --from-file=private.pem=keys/private.pem --dry-run=client -o yaml | apply
@@ -113,18 +134,19 @@ kubectl -n "$NS" create configmap promotion-public-key \
   --from-file=public.pem=promotion-keys/public.pem --dry-run=client -o yaml | apply
 kubectl -n "$NS" create configmap postgres-init \
   --from-file=deploy/postgres/init-mlflow.sql --dry-run=client -o yaml | apply
-# Dev passwords, the same as compose. Encrypted secrets are week 4 work.
-kubectl -n "$NS" create secret generic postgres-credentials \
-  --from-literal=POSTGRES_USER=fraud --from-literal=POSTGRES_PASSWORD=fraud_dev_only \
-  --dry-run=client -o yaml | apply
-kubectl -n "$NS" create secret generic objectstore-credentials \
-  --from-literal=RUSTFS_ACCESS_KEY=minio_dev --from-literal=RUSTFS_SECRET_KEY=minio_dev_only \
-  --dry-run=client -o yaml | apply
+# Each Secret is built from the decrypted values in memory and sent on stdin: no file, nothing
+# on the command line. secret <name> <KEY=value>...
+secret() {
+  local name=$1; shift
+  kubectl -n "$NS" create secret generic "$name" --from-env-file=<(printf '%s\n' "$@") \
+    --dry-run=client -o yaml | apply
+}
+secret postgres-credentials POSTGRES_USER=fraud "POSTGRES_PASSWORD=$POSTGRES_PASSWORD"
+secret objectstore-credentials RUSTFS_ACCESS_KEY=minio_dev "RUSTFS_SECRET_KEY=$OBJECTSTORE_SECRET_KEY"
 # Only MLflow gets these: clients reach the files through MLflow, never the store directly
-kubectl -n "$NS" create secret generic mlflow-credentials \
-  --from-literal=MLFLOW_BACKEND_STORE_URI=postgresql+psycopg2://mlflow:mlflow_dev_only@postgres:5432/mlflow \
-  --from-literal=AWS_ACCESS_KEY_ID=minio_dev --from-literal=AWS_SECRET_ACCESS_KEY=minio_dev_only \
-  --dry-run=client -o yaml | apply
+secret mlflow-credentials \
+  "MLFLOW_BACKEND_STORE_URI=postgresql+psycopg2://mlflow:$MLFLOW_DB_PASSWORD@postgres:5432/mlflow" \
+  AWS_ACCESS_KEY_ID=minio_dev "AWS_SECRET_ACCESS_KEY=$OBJECTSTORE_SECRET_KEY"
 # Metrics: Prometheus's config and Grafana's data source, dashboard loader and dashboard
 kubectl -n "$NS" create configmap prometheus-config \
   --from-file=prometheus.yml=deploy/prometheus/prometheus.k8s.yml --dry-run=client -o yaml | apply
@@ -134,21 +156,20 @@ kubectl -n "$NS" create configmap grafana-providers \
   --from-file=deploy/grafana/dashboards.yml --dry-run=client -o yaml | apply
 kubectl -n "$NS" create configmap grafana-dashboards \
   --from-file=deploy/grafana/dashboards/ --dry-run=client -o yaml | apply
-kubectl -n "$NS" create secret generic grafana-admin \
-  --from-literal=GF_SECURITY_ADMIN_USER=admin --from-literal=GF_SECURITY_ADMIN_PASSWORD=grafana_dev_only \
-  --dry-run=client -o yaml | apply
+# Grafana keeps no state between restarts (emptyDir), so it reads this password on every start
+secret grafana-admin GF_SECURITY_ADMIN_USER=admin "GF_SECURITY_ADMIN_PASSWORD=$GRAFANA_ADMIN_PASSWORD"
 # alert-svc's own login: may add cases and audit rows, never change the audit log
-kubectl -n "$NS" create secret generic alerts-credentials \
-  --from-literal=ALERTS_DSN=postgresql://alerts:alerts_dev_only@postgres:5432/fraud \
-  --dry-run=client -o yaml | apply
+secret alerts-credentials "ALERTS_DSN=postgresql://alerts:$ALERTS_DB_PASSWORD@postgres:5432/fraud"
 # scoring-svc's own Cassandra login: may only read and write txn_by_user (docs/cassandra.md)
-kubectl -n "$NS" create secret generic cassandra-credentials \
-  --from-literal=CASSANDRA_USER=scoring --from-literal=CASSANDRA_PASSWORD=scoring_dev_only \
-  --dry-run=client -o yaml | apply
+secret cassandra-credentials CASSANDRA_USER=scoring "CASSANDRA_PASSWORD=$CASSANDRA_SCORING_PASSWORD"
 # model-admin-svc's own login: may only read and add audit rows
-kubectl -n "$NS" create secret generic model-admin-credentials \
-  --from-literal=MODEL_ADMIN_DSN=postgresql://model_admin:model_admin_dev_only@postgres:5432/fraud \
-  --dry-run=client -o yaml | apply
+secret model-admin-credentials "MODEL_ADMIN_DSN=postgresql://model_admin:$MODEL_ADMIN_DB_PASSWORD@postgres:5432/fraud"
+
+# RustFS reads its key only when it starts: restart it if the key changed
+if [ -n "$PREVIOUS_OBJECTSTORE_SECRET_KEY" ] && [ "$PREVIOUS_OBJECTSTORE_SECRET_KEY" != "$OBJECTSTORE_SECRET_KEY" ]; then
+  echo "restart objectstore: its key changed"
+  kubectl -n "$NS" rollout restart statefulset/objectstore
+fi
 
 echo "3/5 Linkerd (if missing), then apply the Kustomize base"
 ./scripts/k8s_linkerd.sh
@@ -176,18 +197,34 @@ for sts in redpanda cassandra postgres objectstore; do
   fi
 done
 
-# A full deploy restarts all of ours, so every pod reads the current config and image
-kubectl -n "$NS" rollout restart deploy/token-issuer deploy/mlflow deploy/scoring-svc deploy/ingest-svc \
-  deploy/alert-svc deploy/model-admin-svc deploy/kong deploy/prometheus deploy/grafana
-
-echo "4/5 wait for the data services, then create topics and the table"
+echo "4/5 wait for the data services, create topics and tables, set the logins' passwords"
 kubectl -n "$NS" rollout status statefulset/redpanda --timeout=180s
 kubectl -n "$NS" rollout status statefulset/cassandra --timeout=300s
 kubectl -n "$NS" rollout status statefulset/postgres --timeout=180s
 kubectl -n "$NS" rollout status statefulset/objectstore --timeout=180s
 RPK="kubectl -n $NS exec -i redpanda-0 -- rpk" ./scripts/create_topics.sh
-CQLSH="kubectl -n $NS exec -i cassandra-0 -- cqlsh" ./scripts/create_schema.sh
+# Also sets both Cassandra logins to the passwords from the file (from the previous ones if rotating)
+CQLSH="kubectl -n $NS exec -i cassandra-0 -- cqlsh" \
+  PREVIOUS_CASSANDRA_ADMIN_PASSWORD="$PREVIOUS_CASSANDRA_ADMIN_PASSWORD" ./scripts/create_schema.sh
+# No pod uses this one; kept so the next rotation knows the admin's current password
+secret cassandra-admin-credentials "CASSANDRA_ADMIN_PASSWORD=$CASSANDRA_ADMIN_PASSWORD"
 PSQL="kubectl -n $NS exec -i postgres-0 -- psql" ./scripts/create_db_schema.sh
+# Postgres: psql inside the pod logs in over the local socket without a password, so the logins
+# can be set whatever they were before (the dev ones the first time). Sent on stdin.
+kubectl -n "$NS" exec -i postgres-0 -- psql -U fraud -d fraud -v ON_ERROR_STOP=1 -q <<SQL
+ALTER ROLE fraud PASSWORD '$POSTGRES_PASSWORD';
+ALTER ROLE mlflow PASSWORD '$MLFLOW_DB_PASSWORD';
+ALTER ROLE alerts PASSWORD '$ALERTS_DB_PASSWORD';
+ALTER ROLE model_admin PASSWORD '$MODEL_ADMIN_DB_PASSWORD';
+SQL
+echo "logins set: Postgres fraud, mlflow, alerts, model_admin; Cassandra fraud_admin, scoring"
+kubectl -n "$NS" create configmap secrets-fingerprint --from-literal=fingerprint="$FINGERPRINT" \
+  --dry-run=client -o yaml | apply
+
+# A full deploy restarts all of ours, so every pod reads the current config, image and
+# passwords. After the logins above, so no pod starts with a password the database doesn't know.
+kubectl -n "$NS" rollout restart deploy/token-issuer deploy/mlflow deploy/scoring-svc deploy/ingest-svc \
+  deploy/alert-svc deploy/model-admin-svc deploy/kong deploy/prometheus deploy/grafana
 
 echo "5/5 wait for our services (they retry until Redpanda and Cassandra answer)"
 wait_for mlflow token-issuer scoring-svc ingest-svc alert-svc model-admin-svc kong prometheus grafana
