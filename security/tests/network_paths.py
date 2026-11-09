@@ -48,3 +48,8 @@ LISTENS = {
 def allowed(src, dst, port):
     """May a pod of `src` open `dst`:`port`? (src None: a pod with no labels.)"""
     return any(p[:3] == (src, dst, port) for p in PATHS)
+
+# Ports that speak HTTP. The rest (Cassandra, Redpanda, Postgres) are databases whose client
+# speaks first. ST4 needs to know: behind a Linkerd proxy, "connected" isn't enough (docs/mtls.md).
+HTTP_PORTS = {8000, 8100, 5000, 9644, 9000, 9090, 3000}
+

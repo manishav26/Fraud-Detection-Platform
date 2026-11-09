@@ -143,10 +143,29 @@ def rules_of(policy, direction):
 
 @pytest.mark.parametrize("app", sorted(LISTENS))
 def test_each_policy_allows_exactly_the_table(app):
+    # Each path on its app port and on Linkerd's proxy port (4143, docs/mtls.md); Prometheus
+    # also reads every proxy's metrics (4191)
     policy = POLICIES[app]
     assert policy["spec"]["podSelector"] == {"matchLabels": {"app": app}}
-    assert rules_of(policy, "in") == {(s, p) for s, d, p, _ in PATHS if d == app}
-    assert rules_of(policy, "out") == {(d, p) for s, d, p, _ in PATHS if s == app}
+    expect_in = {(s, port) for s, d, p, _ in PATHS if d == app for port in (p, 4143)}
+    if app != "prometheus":
+        expect_in.add(("prometheus", 4191))
+    assert rules_of(policy, "in") == expect_in
+    assert rules_of(policy, "out") == {(d, port) for s, d, p, _ in PATHS if s == app
+                                       for port in (p, 4143)}
+
+
+def test_network_yaml_is_generated_from_the_table():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "gen_network_policies", BASE.parents[2] / "scripts" / "gen_network_policies.py")
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    assert (BASE / "network.yaml").read_text() == gen.render(), \
+        "run: python scripts/gen_network_policies.py"
+    assert (BASE / "mesh-ports.yaml").read_text() == gen.mesh_ports(), \
+        "run: python scripts/gen_network_policies.py"
 
 
 def test_only_kong_takes_traffic_from_anywhere():
@@ -180,3 +199,51 @@ def test_cassandra_checks_logins_and_scoring_has_its_own():
     assert "GRANT SELECT ON fraud.txn_by_user TO scoring" in schema
     assert "GRANT MODIFY ON fraud.txn_by_user TO scoring" in schema
     assert "GRANT ALL" not in schema and "SUPERUSER = true" in schema   # only fraud_admin
+
+
+# ---------- mTLS with Linkerd (week 4, step 4; docs/mtls.md) ----------
+
+def test_namespace_is_meshed_and_accepts_only_meshed_callers():
+    ns = next(d for d in DOCS if d["kind"] == "Namespace")["metadata"]["annotations"]
+    assert ns["linkerd.io/inject"] == "enabled"
+    assert ns["config.linkerd.io/default-inbound-policy"] == "all-authenticated"
+    assert set(ns["config.linkerd.io/opaque-ports"].split(",")) == {"9042", "29092", "5432"}
+
+
+def test_only_kongs_public_port_accepts_callers_outside_the_mesh():
+    servers = [d for d in DOCS if d["kind"] == "Server"]
+    open_to_all = [s for s in servers if s["spec"].get("accessPolicy") == "all-unauthenticated"]
+    assert [(s["spec"]["podSelector"], s["spec"]["port"]) for s in open_to_all] == \
+        [({"matchLabels": {"app": "kong"}}, 8000)]
+
+
+def test_no_pod_opts_out_of_the_mesh():
+    for d in DOCS:
+        if d["kind"] in ("Deployment", "StatefulSet"):
+            notes = d["spec"]["template"]["metadata"].get("annotations", {})
+            assert notes.get("linkerd.io/inject") != "disabled", d["metadata"]["name"]
+
+
+def test_each_port_of_a_shared_pod_names_exactly_its_callers():
+    # Through the mesh every connection arrives on 4143, so for a pod whose ports have different
+    # callers (Redpanda, Kong) the mesh checks the caller's identity per port
+    from security.tests.network_paths import PUBLIC
+
+    servers = {d["metadata"]["name"]: d for d in DOCS if d["kind"] == "Server"}
+    authn = {d["metadata"]["name"]: d for d in DOCS if d["kind"] == "MeshTLSAuthentication"}
+    for app, ports in LISTENS.items():
+        if len(ports) < 2:
+            continue
+        for port in ports:
+            if (app, port) in PUBLIC:
+                continue
+            server = servers[f"{app}-{port}"]["spec"]
+            assert server["port"] == port and server["accessPolicy"] == "deny"
+            names = {r["name"] for r in authn[f"{app}-{port}-callers"]["spec"]["identityRefs"]}
+            assert names == {s for s, d, p, _ in PATHS if (d, p) == (app, port)}
+
+
+def test_database_services_are_marked_opaque():
+    for name, port in (("cassandra", "9042"), ("redpanda", "29092"), ("postgres", "5432")):
+        svc = next(d for d in DOCS if d["kind"] == "Service" and d["metadata"]["name"] == name)
+        assert svc["metadata"]["annotations"]["config.linkerd.io/opaque-ports"] == port

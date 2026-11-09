@@ -1,0 +1,16 @@
+# Linkerd policy (week 4, step 4; docs/mtls.md). Needs Linkerd's CRDs: scripts/k8s_linkerd.sh
+# installs them before the rest is applied.
+#
+# The namespace accepts only meshed callers. Kong's proxy port is the public entrance: the laptop
+# and payment clients are not in the mesh, so it accepts anyone. Kong itself still checks every
+# token (docs/access.md).
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: kong-public
+spec:
+  podSelector:
+    matchLabels: {app: kong}
+  port: 8000
+  proxyProtocol: HTTP/1
+  accessPolicy: all-unauthenticated

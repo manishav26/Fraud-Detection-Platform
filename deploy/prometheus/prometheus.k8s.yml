@@ -52,3 +52,23 @@ scrape_configs:
       - source_labels: [__name__]
         action: keep
         regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_cpu_cfs_throttled_periods_total|container_cpu_cfs_periods_total
+
+  # Every Linkerd proxy's own metrics (week 4, step 4; docs/mtls.md): how many connections each
+  # pod accepted, and whether they were mTLS. Port 4191 on every meshed pod.
+  - job_name: linkerd-proxy
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [fraud]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        action: keep
+        regex: linkerd-admin
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        target_label: app
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+    metric_relabel_configs:
+      # Only connection counts and policy refusals: a proxy reports hundreds of series
+      - source_labels: [__name__]
+        action: keep
+        regex: tcp_open_total|inbound_tcp_authz_deny_total|inbound_http_authz_deny_total

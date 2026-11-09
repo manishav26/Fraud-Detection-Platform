@@ -44,6 +44,10 @@ spec:
   template:
     metadata:
       labels: {app: prometheus}
+      annotations:
+        # Read proxies' metrics directly, not through its own proxy: measuring the mesh must not
+        # depend on it (docs/mtls.md)
+        config.linkerd.io/skip-outbound-ports: "4191"
     spec:
       serviceAccountName: prometheus
       containers:

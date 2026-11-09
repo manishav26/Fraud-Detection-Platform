@@ -26,7 +26,7 @@ defined in the plan; each needs a pass number saved in docs/results/security.md.
 |----|------|----------------|
 | ST1 | 1,000 requests with forged, expired, altered or alg: none tokens | 100% get 401, none reach scoring-svc |
 | ST2 | Each role calls every route | Matrix matches the Roles table, forbidden calls get 403 |
-| ST3 | Test pod outside the mesh calls scoring-svc directly | Connection refused or rejected |
+| ST3 | A pod outside the mesh, labelled as ingest so the network rules allow it, calls scoring-svc's `POST /score` directly (`make k8s-st3`) | Refused; the same call from a real, meshed ingest pod is answered |
 | ST4 | From inside the cluster, each workload and a pod with no labels try every pod and port (`make k8s-st4`) | Exactly the paths in `docs/network.md` connect; everything else, e.g. ingest-svc to Postgres, is blocked |
 | ST5 | Schemathesis fuzzing of the OpenAPI file, 1,000+ cases | No 5xx, no crashes |
 | ST6 | Injection strings in every text field | No change in any data store, no error leak |

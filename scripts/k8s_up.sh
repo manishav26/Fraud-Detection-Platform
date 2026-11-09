@@ -150,7 +150,8 @@ kubectl -n "$NS" create secret generic model-admin-credentials \
   --from-literal=MODEL_ADMIN_DSN=postgresql://model_admin:model_admin_dev_only@postgres:5432/fraud \
   --dry-run=client -o yaml | apply
 
-echo "3/5 apply the Kustomize base"
+echo "3/5 Linkerd (if missing), then apply the Kustomize base"
+./scripts/k8s_linkerd.sh
 # Pods whose YAML changed restart by themselves; a changed config map alone restarts nothing
 kubectl apply -k deploy/k8s/base
 
@@ -164,6 +165,16 @@ if [ "$MODE" = apply ]; then
   kubectl -n "$NS" get pods
   exit 0
 fi
+
+# The data stores get their Linkerd proxy only when their pod is created: restart any that has
+# none yet (once, the first deploy after Linkerd; docs/mtls.md)
+for sts in redpanda cassandra postgres objectstore; do
+  if ! kubectl -n "$NS" get pod "$sts-0" -o jsonpath='{.spec.containers[*].name} {.spec.initContainers[*].name}' \
+       2>/dev/null | grep -q linkerd-proxy; then
+    echo "restart $sts: it has no Linkerd proxy yet"
+    kubectl -n "$NS" rollout restart "statefulset/$sts"
+  fi
+done
 
 # A full deploy restarts all of ours, so every pod reads the current config and image
 kubectl -n "$NS" rollout restart deploy/token-issuer deploy/mlflow deploy/scoring-svc deploy/ingest-svc \

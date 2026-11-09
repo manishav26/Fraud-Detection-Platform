@@ -6,7 +6,7 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 |----|------|--------|----------|
 | ST1 | Forged, expired, altered and `alg: none` tokens | **pass**: 1,000 of 1,000 got 401, none reached ingest (cluster) | below; `make k8s-st1` |
 | ST2 | Each role calls every route | **pass**: all 32 calls (8 routes, including the week 4 model routes) match the roles table, compose and cluster | below; `make st2`; `docs/results/model_admin.md` |
-| ST3 | Pod outside the mesh calls scoring directly | pending (week 4) | |
+| ST3 | A pod outside the mesh, allowed by the network rules, calls scoring's `POST /score` | **pass** (cluster): refused with 403; the same call from a real, meshed ingest pod answered 200 | below; `make k8s-st3`; `docs/mtls.md` |
 | ST4 | Every workload and a pod with no labels try every pod and port | **pass** (cluster): only the 23 allowed paths connect; the intruder pod reaches nothing. Before the policies, every pod reached every port. Cassandra logins: scoring may only read and write its one table (10 of 10 checks) | below; `make k8s-st4`; `docs/network.md` |
 | ST5 | Schemathesis fuzzing | pending (week 5) | |
 | ST6 | Injection strings | pending (week 5) | |
@@ -137,4 +137,45 @@ Afterwards a replay of 600 payments got 600 answers with 0 scored without histor
 in as `scoring`), and `make k8s-read-timing` worked as `fraud_admin` through its tunnel (p95
 6-8 ms). Limit: Cassandra's MODIFY also allows DELETE and TRUNCATE on that table
 (`docs/cassandra.md`).
+
+## ST3: mTLS with Linkerd (k3d cluster, 8 Nov)
+
+`linkerd check --proxy -n fraud`: all checks pass, every pod in the namespace has a proxy.
+
+| Caller | Network rules | Mesh identity | `POST /score` to a scoring pod |
+|---|---|---|---|
+| test pod labelled ingest, outside the mesh | allowed | none | **403** |
+| real ingest pod | allowed | ingest-svc | 200 |
+
+The network rules let the test pod's packets through (it carries ingest's label); the mesh
+refused it because it has no identity. Two layers, each tested on its own.
+
+**ST4 again, with the mesh.** The first run with the mesh failed: ingest, scoring, alert-svc and
+model-admin-svc could reach Redpanda's metrics port 9644. Between meshed pods every connection
+arrives on the proxy port 4143, so the NetworkPolicy can no longer tell 29092 from 9644. The fix
+moved per-port rules into the mesh (`deploy/k8s/base/mesh-ports.yaml`: Redpanda 29092 for our
+four services, 9644 and Kong 8100 for Prometheus only, checked by identity). After it, ST4 passed
+with the same table as before the mesh, the database logins (10 of 10) and ST2 (32 of 32) still
+passed, and a replay of 600 payments got 600 answers.
+
+ST4's check had to change for the mesh: a meshed pod's own proxy accepts every outgoing
+connection at once, so ST4 now counts a path as open only on a real answer (`docs/mtls.md`). The
+mesh's refusal is a 403 with an empty body; an app's 403 (RustFS to an unsigned request) has one.
+
+**What the mesh costs** (30/s through Kong, 1 minute, rows 110,800 on, never sent before):
+
+| End to end, 30/s | p50 | p95 | p99 | Scored without history |
+|---|---|---|---|---|
+| baseline, no mesh (3 runs of 10 min, `docs/results/baseline.md`) | 20 ms | 188 ms (103-334) | 905 ms (653-1,326) | 0.2% |
+| with the mesh (1 run of 1 min) | 28 ms | 192 ms | 1,746 ms | 0.06% (1 of 1,800) |
+
+- About **+8 ms at the middle (p50)**: encrypting and checking each hop (Kong to ingest, ingest to
+  scoring, scoring to Cassandra and Redpanda).
+- **p95 stays inside the baseline's range.** p99 isn't comparable: a minute holds about 18
+  payments above it, so one laptop stall decides it.
+- Server side, scoring's Cassandra calls look slower: p95 read 22 ms (baseline 8-15), write
+  19 ms (5-10), as each call now passes two proxies. That window also held a bursty replay of
+  600 payments just before, so these are indicative only.
+- A proper comparison (10 minutes, mesh against no mesh, same rows) belongs with week 5's ramp
+  test.
 

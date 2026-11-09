@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st4 k8s-st4-db st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
+.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-linkerd st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
 keys:
 	./scripts/gen_keys.sh
 
@@ -51,6 +51,14 @@ k8s-st1:
 
 k8s-st2:
 	python security/tests/st2_roles.py --url http://localhost:8080
+
+# ST3: a pod outside the mesh, allowed by the network rules, calls scoring: refused (docs/mtls.md)
+k8s-st3:
+	python security/tests/st3_mesh.py
+
+# Install Linkerd if missing, then `linkerd check` (docs/mtls.md)
+k8s-linkerd:
+	./scripts/k8s_linkerd.sh
 
 # ST4: from inside the cluster, only the allowed network paths connect (docs/network.md)
 k8s-st4:

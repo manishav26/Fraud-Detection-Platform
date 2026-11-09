@@ -8,8 +8,8 @@ every workload on every port it listens on (pod addresses: policies act on pods,
 ports aren't on Services). The result must match security/tests/network_paths.py exactly: allowed
 paths connect, every other one is blocked. Exit code 1 if anything differs.
 
-"Blocked" is a timeout or a refusal: k3s's policy enforcer rejects a blocked connection at once
-rather than dropping it, and every port tried here is listening, so a refusal is the policy. A pod
+"Blocked" is a timeout, a refusal (k3s's policy enforcer rejects at once rather than dropping;
+every port tried here is listening) or, behind a Linkerd proxy, no real answer (see PROBE). A pod
 is never tested against its own address (that traffic never leaves the pod, so no policy sees it):
 for its own workload it tries another copy, or skips it if there is only one.
 Prints a Markdown table for docs/results/security.md.
@@ -22,26 +22,50 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from security.tests.network_paths import LISTENS, allowed
+from security.tests.network_paths import HTTP_PORTS, LISTENS, allowed
 
 NS = "fraud"
 SOURCES = ["ingest-svc", "scoring-svc", "alert-svc", "model-admin-svc", "token-issuer", "mlflow"]
 INTRUDER = "st4-intruder"
 IMAGE = "fraud/token-issuer:dev"   # any of our images: it has Python, and k3d already has it
 
-# Runs inside each source pod: try every target at once, 2 s each
+# Runs inside each source pod: try every target at once.
+# With Linkerd, a pod's outgoing connection first reaches its own proxy, which accepts it at once
+# even if the far end is blocked, and only then tries the real destination. So "connected" proves
+# nothing; this looks one step further (docs/mtls.md):
+#   HTTP port:     open = a real HTTP answer; blocked = no answer, the proxy's own error (marked
+#                  with an l5d-proxy-error header), or the mesh refusing the caller: a 403 with
+#                  an empty body (an app's 403, e.g. RustFS to an unsigned request, has a body)
+#   database port: these wait for the client to speak, so open = the connection stays open for
+#                  3 s; blocked = refused, or closed by the proxy when it couldn't get through
 PROBE = """
 import json, socket, sys
 from concurrent.futures import ThreadPoolExecutor
 def try_one(t):
-    ip, port = t
+    ip, port, http = t
     try:
-        socket.create_connection((ip, port), timeout=2).close()
-        return "open"
-    except socket.timeout:
+        s = socket.create_connection((ip, port), timeout=3)
+    except OSError:
         return "blocked"
-    except OSError as e:
-        return "blocked"   # refused (the policy's reject) or unreachable
+    try:
+        s.settimeout(3)
+        if http:
+            s.sendall(b"GET / HTTP/1.1\\r\\nHost: st4\\r\\nConnection: close\\r\\n\\r\\n")
+            head = s.recv(4096).decode(errors="replace").lower()
+            if not head.startswith("http/") or "l5d-proxy-error" in head:
+                return "blocked"
+            status = head.split()[1] if len(head.split()) > 1 else ""
+            if status == "403" and "content-length: 0" in head:
+                return "blocked"   # the mesh refused the caller's identity
+            return "open"
+        try:
+            return "blocked" if s.recv(1) == b"" else "open"
+        except socket.timeout:
+            return "open"
+    except OSError:
+        return "blocked"
+    finally:
+        s.close()
 targets = json.loads(sys.argv[1])
 with ThreadPoolExecutor(32) as ex:
     print(json.dumps(list(ex.map(try_one, targets))))
@@ -88,7 +112,8 @@ def main():
                 if others:
                     targets += [(app, port, others[0]) for port in ports]
             out = kubectl("exec", pod, "--", "python", "-c", PROBE,
-                          json.dumps([[ip, port] for _, port, ip in targets]))
+                          json.dumps([[ip, port, port in HTTP_PORTS]
+                                      for _, port, ip in targets]))
             results = json.loads(out.strip().splitlines()[-1])
             opened = []
             for (dst, port, _), result in zip(targets, results):

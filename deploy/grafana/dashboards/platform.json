@@ -702,6 +702,101 @@
       ]
     },
     {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Mesh: new connections per second, encrypted or not",
+      "description": "Connections each pod's Linkerd proxy accepted (docs/mtls.md). mTLS: from another pod in the mesh, encrypted and both ends proven. Not mTLS: Kubernetes' probes from the node, and Kong's public port (clients outside the cluster). Anything else unencrypted is worth a look. Cluster only: compose has no mesh.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (app) (rate(tcp_open_total{direction=\"inbound\", tls=\"true\"}[1m]))",
+          "legendFormat": "{{app}} mTLS"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (app) (rate(tcp_open_total{direction=\"inbound\", tls!=\"true\"}[1m]))",
+          "legendFormat": "{{app}} not mTLS"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Mesh: callers refused by policy",
+      "description": "Connections or requests a proxy refused because the caller had no mesh identity (the namespace accepts only meshed callers, except Kong's public port). ST3 makes these on purpose; at other times they mean something outside the mesh tried to call a service.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (app) (rate({__name__=~\"inbound_(tcp|http)_authz_deny_total\"}[1m]))",
+          "legendFormat": "{{app}}"
+        }
+      ]
+    },
+    {
       "id": 12,
       "type": "timeseries",
       "title": "CPU per pod (cores)",
@@ -712,7 +807,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 64,
+        "y": 72,
         "w": 24,
         "h": 8
       },
@@ -754,7 +849,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 72,
+        "y": 80,
         "w": 12,
         "h": 8
       },
@@ -796,7 +891,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 72,
+        "y": 80,
         "w": 12,
         "h": 8
       },

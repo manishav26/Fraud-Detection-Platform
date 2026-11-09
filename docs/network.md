@@ -53,6 +53,10 @@ anything, or any pod to Kong from inside.
 
 ## How it is built
 
+- **With Linkerd (step 4)** each path is also open on the proxy port 4143, every pod may reach
+  the Linkerd control plane, and Prometheus may read every proxy (4191): `docs/mtls.md`. The
+  policies are generated from the table: `python scripts/gen_network_policies.py`.
+
 - **Default deny, both directions** (`default-deny`, every pod in the namespace), then **one
   policy per workload**: who may call it, and whom it may call. A path is open only if both ends
   allow it.
