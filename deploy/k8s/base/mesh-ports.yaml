@@ -50,8 +50,9 @@ kind: MeshTLSAuthentication
 metadata:
   name: redpanda-29092-callers
 spec:
-  identityRefs:   # alert-svc, ingest-svc, model-admin-svc, scoring-svc
+  identityRefs:   # alert-svc, feature-job, ingest-svc, model-admin-svc, scoring-svc
     - {kind: ServiceAccount, name: alert-svc}
+    - {kind: ServiceAccount, name: feature-job}
     - {kind: ServiceAccount, name: ingest-svc}
     - {kind: ServiceAccount, name: model-admin-svc}
     - {kind: ServiceAccount, name: scoring-svc}

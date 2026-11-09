@@ -27,6 +27,6 @@ jobs:
       - name: risky settings in Dockerfiles and Kubernetes YAML (Trivy)
         run: ./scripts/scan.sh config
       - name: build our images
-        run: docker compose build token-issuer ingest-svc scoring-svc mlflow alert-svc model-admin-svc siem-mock
+        run: docker compose build token-issuer ingest-svc scoring-svc mlflow alert-svc model-admin-svc siem-mock feature-job
       - name: fixable HIGH and CRITICAL vulnerabilities in the images (Trivy)
         run: ./scripts/scan.sh images

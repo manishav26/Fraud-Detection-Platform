@@ -33,6 +33,9 @@ scans on every push, the same ones on the laptop. Test: ST10 (CI green, no unwai
 | KSV-0014: writable root filesystem (HIGH) | all 13 workloads | our 5: read-only, with a small writable `/tmp` (scoring downloads promoted models there). The 8 third-party images: waived (they write their own config and runtime files) |
 | KSV-0047: Prometheus may use the nodes' proxy (HIGH) | Prometheus | waived: that's how it reads cAdvisor's CPU numbers, read-only |
 
+Later images: the feature job (week 4, step 1) brought Spark's Java libraries; their findings were
+patched or waived per jar (`docs/spark.md`, "Supply chain").
+
 After the changes, all four scans pass. The token issuer's key is also mounted readable by its
 own group only (`defaultMode: 0440`, `fsGroup: 10001`) instead of everyone in the pod.
 

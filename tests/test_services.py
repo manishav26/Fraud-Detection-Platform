@@ -30,11 +30,18 @@ def pins(path):
     return out
 
 
+# Deliberate differences from dev, each with its reason
+DIFFERENT_FROM_DEV = {
+    # PySpark 4.2 warns it doesn't fully support pandas 3 yet (docs/spark.md)
+    ("feature-job", "pandas"),
+}
+
+
 def test_every_dependency_is_pinned_and_services_match_dev():
     dev = pins("requirements-dev.txt")
     for req in Path("services").glob("*/requirements.txt"):
         for name, version in pins(req).items():
-            if name in dev:
+            if name in dev and (req.parent.name, name) not in DIFFERENT_FROM_DEV:
                 assert version == dev[name], f"{req}: {name} {version} != dev {dev[name]}"
 
 

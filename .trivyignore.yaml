@@ -22,3 +22,174 @@ misconfigurations:
     statement: >-
       Prometheus reads each node's CPU and memory numbers (cAdvisor) through the API's node proxy:
       a read-only GET on nodes/proxy, the standard way to scrape cAdvisor.
+
+# The feature job's image (week 4, step 1; docs/spark.md, "Supply chain"). The vulnerable
+# standalone jars PySpark ships are replaced with fixed releases at build time
+# (services/feature-job/patch_jars.sh). These are the copies baked INSIDE Hadoop's and Spark's
+# own jars, which only a new Spark release can fix. Each waiver covers that one jar only.
+vulnerabilities:
+  - id: CVE-2026-102554
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/hadoop-client-runtime-3.5.0.jar
+    statement: >-
+      Copies of jackson, guava, jetty and jline shaded inside Hadoop's client, which Spark 4.2.1
+      ships. This job uses Hadoop only to write its checkpoint to the local disk: no Hadoop HTTP
+      server (jetty) or shell (jline) is started, and the JSON it parses comes only from our own
+      topic and checkpoint. Fixed when Spark ships a newer Hadoop.
+  - id: CVE-2026-2332
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/hadoop-client-runtime-3.5.0.jar
+    statement: >-
+      Copies of jackson, guava, jetty and jline shaded inside Hadoop's client, which Spark 4.2.1
+      ships. This job uses Hadoop only to write its checkpoint to the local disk: no Hadoop HTTP
+      server (jetty) or shell (jline) is started, and the JSON it parses comes only from our own
+      topic and checkpoint. Fixed when Spark ships a newer Hadoop.
+  - id: CVE-2026-54512
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/hadoop-client-runtime-3.5.0.jar
+    statement: >-
+      Copies of jackson, guava, jetty and jline shaded inside Hadoop's client, which Spark 4.2.1
+      ships. This job uses Hadoop only to write its checkpoint to the local disk: no Hadoop HTTP
+      server (jetty) or shell (jline) is started, and the JSON it parses comes only from our own
+      topic and checkpoint. Fixed when Spark ships a newer Hadoop.
+  - id: CVE-2026-54513
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/hadoop-client-runtime-3.5.0.jar
+    statement: >-
+      Copies of jackson, guava, jetty and jline shaded inside Hadoop's client, which Spark 4.2.1
+      ships. This job uses Hadoop only to write its checkpoint to the local disk: no Hadoop HTTP
+      server (jetty) or shell (jline) is started, and the JSON it parses comes only from our own
+      topic and checkpoint. Fixed when Spark ships a newer Hadoop.
+  - id: CVE-2026-56740
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/hadoop-client-runtime-3.5.0.jar
+    statement: >-
+      Copies of jackson, guava, jetty and jline shaded inside Hadoop's client, which Spark 4.2.1
+      ships. This job uses Hadoop only to write its checkpoint to the local disk: no Hadoop HTTP
+      server (jetty) or shell (jline) is started, and the JSON it parses comes only from our own
+      topic and checkpoint. Fixed when Spark ships a newer Hadoop.
+  - id: CVE-2026-56741
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/hadoop-client-runtime-3.5.0.jar
+    statement: >-
+      Copies of jackson, guava, jetty and jline shaded inside Hadoop's client, which Spark 4.2.1
+      ships. This job uses Hadoop only to write its checkpoint to the local disk: no Hadoop HTTP
+      server (jetty) or shell (jline) is started, and the JSON it parses comes only from our own
+      topic and checkpoint. Fixed when Spark ships a newer Hadoop.
+  - id: CVE-2026-68494
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/hadoop-client-runtime-3.5.0.jar
+    statement: >-
+      Copies of jackson, guava, jetty and jline shaded inside Hadoop's client, which Spark 4.2.1
+      ships. This job uses Hadoop only to write its checkpoint to the local disk: no Hadoop HTTP
+      server (jetty) or shell (jline) is started, and the JSON it parses comes only from our own
+      topic and checkpoint. Fixed when Spark ships a newer Hadoop.
+  - id: CVE-2026-68497
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/hadoop-client-runtime-3.5.0.jar
+    statement: >-
+      Copies of jackson, guava, jetty and jline shaded inside Hadoop's client, which Spark 4.2.1
+      ships. This job uses Hadoop only to write its checkpoint to the local disk: no Hadoop HTTP
+      server (jetty) or shell (jline) is started, and the JSON it parses comes only from our own
+      topic and checkpoint. Fixed when Spark ships a newer Hadoop.
+  - id: CVE-2026-77422
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/hadoop-client-runtime-3.5.0.jar
+    statement: >-
+      Copies of jackson, guava, jetty and jline shaded inside Hadoop's client, which Spark 4.2.1
+      ships. This job uses Hadoop only to write its checkpoint to the local disk: no Hadoop HTTP
+      server (jetty) or shell (jline) is started, and the JSON it parses comes only from our own
+      topic and checkpoint. Fixed when Spark ships a newer Hadoop.
+  - id: CVE-2026-89407
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/hadoop-client-runtime-3.5.0.jar
+    statement: >-
+      Copies of jackson, guava, jetty and jline shaded inside Hadoop's client, which Spark 4.2.1
+      ships. This job uses Hadoop only to write its checkpoint to the local disk: no Hadoop HTTP
+      server (jetty) or shell (jline) is started, and the JSON it parses comes only from our own
+      topic and checkpoint. Fixed when Spark ships a newer Hadoop.
+  - id: CVE-2026-89425
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/hadoop-client-runtime-3.5.0.jar
+    statement: >-
+      Copies of jackson, guava, jetty and jline shaded inside Hadoop's client, which Spark 4.2.1
+      ships. This job uses Hadoop only to write its checkpoint to the local disk: no Hadoop HTTP
+      server (jetty) or shell (jline) is started, and the JSON it parses comes only from our own
+      topic and checkpoint. Fixed when Spark ships a newer Hadoop.
+  - id: CVE-2026-91776
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/hadoop-client-runtime-3.5.0.jar
+    statement: >-
+      Copies of jackson, guava, jetty and jline shaded inside Hadoop's client, which Spark 4.2.1
+      ships. This job uses Hadoop only to write its checkpoint to the local disk: no Hadoop HTTP
+      server (jetty) or shell (jline) is started, and the JSON it parses comes only from our own
+      topic and checkpoint. Fixed when Spark ships a newer Hadoop.
+  - id: CVE-2026-91777
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/hadoop-client-runtime-3.5.0.jar
+    statement: >-
+      Copies of jackson, guava, jetty and jline shaded inside Hadoop's client, which Spark 4.2.1
+      ships. This job uses Hadoop only to write its checkpoint to the local disk: no Hadoop HTTP
+      server (jetty) or shell (jline) is started, and the JSON it parses comes only from our own
+      topic and checkpoint. Fixed when Spark ships a newer Hadoop.
+  - id: CVE-2026-54512
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/parquet-jackson-1.17.0.jar
+    statement: >-
+      Parquet's own shaded copy of jackson. This job reads and writes no Parquet files (its state
+      and checkpoint use Spark's own formats). Fixed when Spark ships a newer Parquet.
+  - id: CVE-2026-54513
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/parquet-jackson-1.17.0.jar
+    statement: >-
+      Parquet's own shaded copy of jackson. This job reads and writes no Parquet files (its state
+      and checkpoint use Spark's own formats). Fixed when Spark ships a newer Parquet.
+  - id: CVE-2026-68494
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/parquet-jackson-1.17.0.jar
+    statement: >-
+      Parquet's own shaded copy of jackson. This job reads and writes no Parquet files (its state
+      and checkpoint use Spark's own formats). Fixed when Spark ships a newer Parquet.
+  - id: CVE-2026-68497
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/parquet-jackson-1.17.0.jar
+    statement: >-
+      Parquet's own shaded copy of jackson. This job reads and writes no Parquet files (its state
+      and checkpoint use Spark's own formats). Fixed when Spark ships a newer Parquet.
+  - id: CVE-2026-89407
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/parquet-jackson-1.17.0.jar
+    statement: >-
+      Parquet's own shaded copy of jackson. This job reads and writes no Parquet files (its state
+      and checkpoint use Spark's own formats). Fixed when Spark ships a newer Parquet.
+  - id: CVE-2026-89425
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/parquet-jackson-1.17.0.jar
+    statement: >-
+      Parquet's own shaded copy of jackson. This job reads and writes no Parquet files (its state
+      and checkpoint use Spark's own formats). Fixed when Spark ships a newer Parquet.
+  - id: CVE-2026-91776
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/parquet-jackson-1.17.0.jar
+    statement: >-
+      Parquet's own shaded copy of jackson. This job reads and writes no Parquet files (its state
+      and checkpoint use Spark's own formats). Fixed when Spark ships a newer Parquet.
+  - id: CVE-2026-91777
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/parquet-jackson-1.17.0.jar
+    statement: >-
+      Parquet's own shaded copy of jackson. This job reads and writes no Parquet files (its state
+      and checkpoint use Spark's own formats). Fixed when Spark ships a newer Parquet.
+  - id: CVE-2026-10050
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/spark-core_2.13-4.2.1.jar
+    statement: >-
+      Jetty shaded inside Spark core for the Spark web UI, which this job switches off
+      (spark.ui.enabled=false), and the pod accepts connections only on its metrics port
+      (NetworkPolicy and Linkerd).
+  - id: CVE-2026-102554
+    paths:
+      - usr/local/lib/python3.11/site-packages/pyspark/jars/spark-network-common_2.13-4.2.1.jar
+    statement: >-
+      Guava shaded inside Spark's RPC layer. In local mode the driver and executors are one
+      process, and no other pod may connect to it (NetworkPolicy and Linkerd).

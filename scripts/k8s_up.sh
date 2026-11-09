@@ -18,7 +18,7 @@ if [ -n "$(docker compose ps -q 2>/dev/null)" ]; then
   exit 1
 fi
 # Ours: built from this repo, so copied in on every full deploy. Each deployment has the same name.
-OURS=(token-issuer ingest-svc scoring-svc mlflow alert-svc model-admin-svc siem-mock)
+OURS=(token-issuer ingest-svc scoring-svc mlflow alert-svc model-admin-svc siem-mock feature-job)
 PUBLIC=(kong:3.7 redpandadata/redpanda:v24.2.7 cassandra:4.1 postgres:16 rustfs/rustfs:latest
         prom/prometheus:v3.13.5 grafana/grafana:11.6.7)
 
@@ -66,8 +66,10 @@ if [ "$MODE" = update ]; then
   echo "update $SVC: build, copy into the cluster, restart"
   docker compose build "$SVC"
   import_images "fraud/$SVC:dev"
-  kubectl -n "$NS" rollout restart "deploy/$SVC"
-  wait_for "$SVC"
+  KIND=deploy
+  [ "$SVC" = feature-job ] && KIND=statefulset   # one copy with its own checkpoint disk
+  kubectl -n "$NS" rollout restart "$KIND/$SVC"
+  kubectl -n "$NS" rollout status "$KIND/$SVC" --timeout=300s
   kubectl -n "$NS" get pods -l "app=$SVC"
   exit 0
 fi
@@ -162,6 +164,8 @@ secret grafana-admin GF_SECURITY_ADMIN_USER=admin "GF_SECURITY_ADMIN_PASSWORD=$G
 secret alerts-credentials "ALERTS_DSN=postgresql://alerts:$ALERTS_DB_PASSWORD@postgres:5432/fraud"
 # scoring-svc's own Cassandra login: may only read and write txn_by_user (docs/cassandra.md)
 secret cassandra-credentials CASSANDRA_USER=scoring "CASSANDRA_PASSWORD=$CASSANDRA_SCORING_PASSWORD"
+# The feature job's own Cassandra login: may only write its two tables (docs/spark.md)
+secret features-credentials CASSANDRA_USER=features "CASSANDRA_PASSWORD=$CASSANDRA_FEATURES_PASSWORD"
 # model-admin-svc's own login: may only read and add audit rows
 secret model-admin-credentials "MODEL_ADMIN_DSN=postgresql://model_admin:$MODEL_ADMIN_DB_PASSWORD@postgres:5432/fraud"
 # The SIEM's token: alert-svc presents it, siem-mock checks it (docs/siem.md)
@@ -227,8 +231,11 @@ kubectl -n "$NS" create configmap secrets-fingerprint --from-literal=fingerprint
 # passwords. After the logins above, so no pod starts with a password the database doesn't know.
 kubectl -n "$NS" rollout restart deploy/token-issuer deploy/mlflow deploy/scoring-svc deploy/ingest-svc \
   deploy/alert-svc deploy/model-admin-svc deploy/siem-mock deploy/kong deploy/prometheus deploy/grafana
+# The feature job: after its Cassandra login exists; resumes from its checkpoint (docs/spark.md)
+kubectl -n "$NS" rollout restart statefulset/feature-job
 
 echo "5/5 wait for our services (they retry until Redpanda and Cassandra answer)"
 wait_for mlflow token-issuer scoring-svc ingest-svc alert-svc model-admin-svc siem-mock kong prometheus grafana
+kubectl -n "$NS" rollout status statefulset/feature-job --timeout=300s
 kubectl -n "$NS" get pods -o wide
 echo "Gateway: http://localhost:8080"

@@ -10,6 +10,7 @@ CQLSH="${CQLSH:-docker compose exec -T cassandra cqlsh}"
 # Compose: the dev passwords. Cluster: `make k8s-st4-db` passes the encrypted ones (docs/secrets.md)
 SCORING="${CASSANDRA_SCORING_PASSWORD:-scoring_dev_only}"
 ADMIN="${CASSANDRA_ADMIN_PASSWORD:-fraud_admin_dev_only}"
+FEATURES="${CASSANDRA_FEATURES_PASSWORD:-features_dev_only}"
 FAILED=0
 printf '| Login | Statement | Expected | Got |\n|---|---|---|---|\n'
 
@@ -37,6 +38,11 @@ check scoring "$SCORING" refused "GRANT SELECT ON ALL KEYSPACES TO scoring"
 check scoring wrong_password refused "$ROW_CHECK"
 check cassandra cassandra refused "$ROW_CHECK"
 check fraud_admin "$ADMIN" ok "$ROW_CHECK"
+# The feature job's login writes its two tables and nothing else; it can't even read history
+check features "$FEATURES" refused "$ROW_CHECK"
+check features "$FEATURES" refused "SELECT txn_id FROM fraud.features_by_txn LIMIT 1"
+check features "$FEATURES" refused "DROP TABLE fraud.features_by_txn"
+check features "$FEATURES" refused "TRUNCATE fraud.txn_by_user"
 # With the encrypted passwords in use, the dev ones written in this repo must no longer work
 if [ "$SCORING" != scoring_dev_only ]; then
   check scoring scoring_dev_only refused "$ROW_CHECK"

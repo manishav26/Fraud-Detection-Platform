@@ -11,7 +11,7 @@
 #   configmap  postgres-init  deploy/postgres/        (postgres: creates the mlflow database)
 #   secret     postgres-credentials, objectstore-credentials, mlflow-credentials,
 #              alerts-credentials, model-admin-credentials, cassandra-credentials,
-#              cassandra-admin-credentials, siem-credentials
+#              cassandra-admin-credentials, siem-credentials, features-credentials
 #              (passwords from deploy/k8s/secrets.enc.env, decrypted by k8s-up; docs/secrets.md)
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -30,6 +30,7 @@ resources:
   - alert-svc.yaml
   - model-admin.yaml
   - siem-mock.yaml
+  - feature-job.yaml
   - prometheus.yaml
   - grafana.yaml
   - token-issuer.yaml

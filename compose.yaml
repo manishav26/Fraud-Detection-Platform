@@ -112,6 +112,18 @@ services:
       SIEM_URL: "http://siem-mock:8000"   # every audit row goes to the SIEM (docs/siem.md)
       SIEM_TOKEN: siem_dev_only
     depends_on: [redpanda, postgres, siem-mock]
+  feature-job:  # streaming features (docs/spark.md). Not started by `make up` (memory):
+    # docker compose --profile spark up -d feature-job
+    profiles: [spark]
+    build: { context: ., dockerfile: services/feature-job/Dockerfile }
+    image: fraud/feature-job:dev
+    environment:
+      KAFKA_BOOTSTRAP: "redpanda:29092"
+      CASSANDRA_HOSTS: cassandra
+      CASSANDRA_USER: features
+      CASSANDRA_PASSWORD: features_dev_only
+      CHECKPOINT: /tmp/checkpoint/feature-job   # lost with the container: compose is for trying it
+    depends_on: [redpanda, cassandra]
   siem-mock:  # stand-in for the security team's SIEM. View: http://localhost:8088
     build: { context: ., dockerfile: services/siem-mock/Dockerfile }
     image: fraud/siem-mock:dev

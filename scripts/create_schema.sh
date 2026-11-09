@@ -5,6 +5,7 @@
 # Logins (Cassandra checks them since week 4):
 #   fraud_admin  superuser: this script and the laptop tools (backfill, read timing, parity)
 #   scoring      scoring-svc only: read and write fraud.txn_by_user, nothing else
+#   features     the feature job only: write features_by_txn and user_features, nothing else
 # Cassandra's built-in `cassandra` superuser has a password everyone knows, so after
 # fraud_admin exists it gets a random password and can no longer log in.
 #
@@ -21,6 +22,7 @@ ADMIN_USER=fraud_admin
 DEV_ADMIN_PASSWORD=fraud_admin_dev_only   # compose; and a cluster from before the encrypted ones
 ADMIN_PASSWORD=${CASSANDRA_ADMIN_PASSWORD:-$DEV_ADMIN_PASSWORD}
 SCORING_PASSWORD=${CASSANDRA_SCORING_PASSWORD:-scoring_dev_only}
+FEATURES_PASSWORD=${CASSANDRA_FEATURES_PASSWORD:-features_dev_only}
 PREVIOUS_ADMIN_PASSWORD=${PREVIOUS_CASSANDRA_ADMIN_PASSWORD:-$DEV_ADMIN_PASSWORD}   # before a rotation
 
 as() { local user=$1 password=$2; shift 2; $CQLSH -u "$user" -p "$password" "$@"; }
@@ -58,12 +60,34 @@ fi
 admin() { as "$ADMIN_USER" "$ADMIN_PASSWORD" "$@"; }
 admin < deploy/cassandra/schema.cql   # on stdin, so no file has to exist inside the container
 
+# set_login <role> <password>: make sure the login exists and takes this password. A new login is
+# created with its password in one statement; an existing one is changed only if it doesn't take
+# the password already, so a rotation reaches it. (Cassandra 4.1 refuses a second password change
+# for the same role within 5 seconds, which "create, then always change" ran into.)
+set_login() {
+  local role=$1 password=$2
+  if works "$role" "$password"; then
+    echo "login $role: password already current"
+  elif admin -e "SELECT role FROM system_auth.roles WHERE role = '$role'" | grep -qw "$role"; then
+    admin <<< "ALTER ROLE $role WITH PASSWORD = '$password';"
+    echo "login $role: password changed"
+  else
+    admin <<< "CREATE ROLE $role WITH PASSWORD = '$password' AND LOGIN = true;"
+    echo "login $role: created"
+  fi
+}
+
 # scoring may read and write its one table: no other table, no schema changes, no logins.
 # (Cassandra's MODIFY also allows DELETE and TRUNCATE on that table; it has no finer permission.)
-# Its password is set every run, so a rotation reaches it too.
-admin <<< "CREATE ROLE IF NOT EXISTS scoring WITH PASSWORD = '$SCORING_PASSWORD' AND LOGIN = true;
-ALTER ROLE scoring WITH PASSWORD = '$SCORING_PASSWORD';"
+set_login scoring "$SCORING_PASSWORD"
 admin -e "GRANT SELECT ON fraud.txn_by_user TO scoring"
 admin -e "GRANT MODIFY ON fraud.txn_by_user TO scoring"
 admin -e "LIST ALL PERMISSIONS OF scoring"
 admin -e "DESCRIBE TABLE fraud.txn_by_user"
+
+# features (the streaming feature job, docs/spark.md): writes its two tables, reads nothing.
+# Its state lives in Spark's checkpoint, so it never needs to read Cassandra.
+set_login features "$FEATURES_PASSWORD"
+admin -e "GRANT MODIFY ON fraud.features_by_txn TO features"
+admin -e "GRANT MODIFY ON fraud.user_features TO features"
+admin -e "LIST ALL PERMISSIONS OF features"

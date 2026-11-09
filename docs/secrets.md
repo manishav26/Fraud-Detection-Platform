@@ -30,6 +30,7 @@ makes it easy to poke at.
 | `MODEL_ADMIN_DB_PASSWORD` | Postgres `model_admin` | model-admin-svc |
 | `CASSANDRA_ADMIN_PASSWORD` | Cassandra `fraud_admin` | schema script, `make k8s-backfill`, `make k8s-read-timing` |
 | `CASSANDRA_SCORING_PASSWORD` | Cassandra `scoring` | scoring-svc |
+| `CASSANDRA_FEATURES_PASSWORD` | Cassandra `features` (week 4, step 1) | the feature job (`docs/spark.md`) |
 | `OBJECTSTORE_SECRET_KEY` | RustFS | RustFS itself, MLflow |
 | `GRAFANA_ADMIN_PASSWORD` | Grafana `admin` | you, in the browser (`make k8s-password`) |
 | `SIEM_TOKEN` | the SIEM's collector token (week 4, step 7) | alert-svc sends with it, siem-mock checks it (`docs/siem.md`) |

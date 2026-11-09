@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-siem k8s-siem-check k8s-linkerd st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
+.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-siem k8s-siem-check k8s-spark-parity k8s-spark-throughput k8s-spark-logs spark-smoke k8s-linkerd st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
 keys:
 	./scripts/gen_keys.sh
 
@@ -258,6 +258,29 @@ k8s-alert-stats:
 	@for p in $$(kubectl -n fraud get pods -l app=alert-svc -o name); do \
 		echo "$$p $$(kubectl -n fraud exec $$p -- python -c "$(ALERT_COUNTS)")"; \
 	done
+
+# The streaming feature job (docs/spark.md). Parity: the first 10,000 stream payments through
+# the job vs training's code, at least 99.9% equal. Throughput: a 100,000-payment backlog.
+# JOB=python runs the Python writer instead. Each uses its own topic, then puts the job back.
+JOB ?= spark
+k8s-spark-parity:
+	./scripts/feature_job_run.sh parity $(JOB)
+
+k8s-spark-throughput:
+	./scripts/feature_job_run.sh throughput $(JOB)
+
+# Spark without a cluster: the real job in its real image (read-only, non-root) on 10,000 payments
+# from files instead of Kafka, compared with training's code (docs/spark.md)
+spark-smoke:
+	python -m stream.spark_smoke prepare
+	docker compose build feature-job
+	docker run --rm --read-only --tmpfs /tmp:size=2g --memory=2g \
+		-v "$(CURDIR)/data/spark-smoke:/srv/data/spark-smoke:ro" \
+		-e PYSPARK_SUBMIT_ARGS="--driver-memory 900m pyspark-shell" \
+		fraud/feature-job:dev python -m stream.spark_smoke run
+
+k8s-spark-logs:
+	kubectl -n fraud logs feature-job-0 -c feature-job --tail=30
 
 # The mock SIEM's view: http://localhost:8088 until Ctrl+C (compose: always on 8088). docs/siem.md
 k8s-siem:

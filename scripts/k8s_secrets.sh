@@ -19,6 +19,7 @@ SECRET_NAMES=(
   MODEL_ADMIN_DB_PASSWORD      # Postgres `model_admin`: model-admin-svc
   CASSANDRA_ADMIN_PASSWORD     # Cassandra `fraud_admin`: schema, backfill, read timing
   CASSANDRA_SCORING_PASSWORD   # Cassandra `scoring`: scoring-svc
+  CASSANDRA_FEATURES_PASSWORD  # Cassandra `features`: the feature job (docs/spark.md)
   OBJECTSTORE_SECRET_KEY       # RustFS: MLflow's model files
   GRAFANA_ADMIN_PASSWORD       # Grafana `admin`
   SIEM_TOKEN                   # alert-svc -> siem-mock (docs/siem.md)

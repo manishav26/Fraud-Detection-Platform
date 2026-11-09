@@ -15,7 +15,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 ENC = ROOT / "deploy/k8s/secrets.enc.env"
 HELPER = (ROOT / "scripts/k8s_secrets.sh").read_text()
-NAMES = re.findall(r"^\s+([A-Z_]+)\s+#", HELPER.split("SECRET_NAMES=(")[1].split(")")[0], re.MULTILINE)
+NAMES = re.findall(r"^\s+([A-Z_]+)\s+#", HELPER.split("SECRET_NAMES=(")[1].split("\n)")[0], re.MULTILINE)
 DEV = re.compile(r"\w+_dev_only")
 
 
@@ -26,7 +26,7 @@ def k8s_recipes():
 
 
 def test_the_list_of_passwords_was_read():
-    assert len(NAMES) == 9 and {"POSTGRES_PASSWORD", "SIEM_TOKEN"} <= set(NAMES)
+    assert len(NAMES) == 10 and {"POSTGRES_PASSWORD", "SIEM_TOKEN", "CASSANDRA_FEATURES_PASSWORD"} <= set(NAMES)
 
 
 @pytest.mark.parametrize("path", ["scripts/k8s_up.sh", "scripts/k8s_secrets.sh",

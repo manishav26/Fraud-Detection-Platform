@@ -210,6 +210,28 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
+  name: feature-job
+spec:
+  podSelector: {matchLabels: {app: feature-job}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:  # metrics
+        - podSelector: {matchLabels: {app: prometheus}}
+      ports: [{protocol: TCP, port: 8000}, {protocol: TCP, port: 4143}]
+    - from:  # its Linkerd proxy's metrics
+        - podSelector: {matchLabels: {app: prometheus}}
+      ports: [{protocol: TCP, port: 4191}]
+  egress:
+    - to:  # txn.raw
+        - podSelector: {matchLabels: {app: redpanda}}
+      ports: [{protocol: TCP, port: 29092}, {protocol: TCP, port: 4143}]
+    - to:  # features_by_txn, user_features
+        - podSelector: {matchLabels: {app: cassandra}}
+      ports: [{protocol: TCP, port: 9042}, {protocol: TCP, port: 4143}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
   name: mlflow
 spec:
   podSelector: {matchLabels: {app: mlflow}}
@@ -246,6 +268,9 @@ spec:
     - from:  # txn.scored
         - podSelector: {matchLabels: {app: alert-svc}}
       ports: [{protocol: TCP, port: 29092}, {protocol: TCP, port: 4143}]
+    - from:  # txn.raw
+        - podSelector: {matchLabels: {app: feature-job}}
+      ports: [{protocol: TCP, port: 29092}, {protocol: TCP, port: 4143}]
     - from:  # model.events
         - podSelector: {matchLabels: {app: model-admin-svc}}
       ports: [{protocol: TCP, port: 29092}, {protocol: TCP, port: 4143}]
@@ -267,6 +292,9 @@ spec:
   ingress:
     - from:  # user history
         - podSelector: {matchLabels: {app: scoring-svc}}
+      ports: [{protocol: TCP, port: 9042}, {protocol: TCP, port: 4143}]
+    - from:  # features_by_txn, user_features
+        - podSelector: {matchLabels: {app: feature-job}}
       ports: [{protocol: TCP, port: 9042}, {protocol: TCP, port: 4143}]
     - from:  # its Linkerd proxy's metrics
         - podSelector: {matchLabels: {app: prometheus}}
@@ -340,6 +368,9 @@ spec:
       ports: [{protocol: TCP, port: 8000}, {protocol: TCP, port: 4143}]
     - to:  # metrics
         - podSelector: {matchLabels: {app: siem-mock}}
+      ports: [{protocol: TCP, port: 8000}, {protocol: TCP, port: 4143}]
+    - to:  # metrics
+        - podSelector: {matchLabels: {app: feature-job}}
       ports: [{protocol: TCP, port: 8000}, {protocol: TCP, port: 4143}]
     - to:  # metrics
         - podSelector: {matchLabels: {app: kong}}
