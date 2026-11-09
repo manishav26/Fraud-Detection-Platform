@@ -78,7 +78,10 @@ anything, or any pod to Kong from inside.
   finds no token to use against the cluster.
 - **Database logins:** Postgres has one per service: `alerts` (alert-svc), `model_admin`
   (model-admin-svc), `mlflow`. The owner login `fraud` is used only by the setup scripts and
-  `make verify-audit` from the laptop.
+  `make verify-audit` from the laptop. Cassandra checks logins since this step: scoring has its
+  own, which may only read and write `txn_by_user` (`docs/cassandra.md`). So even a pod that
+  reached a database would need that service's password, and could do only what that service
+  does.
 
 ## Limits
 

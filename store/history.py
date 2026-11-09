@@ -12,6 +12,7 @@ never create duplicates. Design and reasons: docs/cassandra.md
 import os
 from datetime import UTC, datetime
 
+from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
 from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
 from cassandra.query import ConsistencyLevel, dict_factory
@@ -61,6 +62,17 @@ def _timeout(seconds):
     return {} if seconds is None else {"timeout": seconds}
 
 
+# Cassandra checks logins since week 4 (docs/cassandra.md). scoring-svc gets its own login, which
+# may only read and write txn_by_user; the laptop tools (backfill, read timing, parity) default to
+# the admin login. Dev passwords, like Postgres's (scripts/create_schema.sh).
+DEFAULT_USER, DEFAULT_PASSWORD = "fraud_admin", "fraud_admin_dev_only"
+
+
+def auth_provider():
+    return PlainTextAuthProvider(os.getenv("CASSANDRA_USER", DEFAULT_USER),
+                                 os.getenv("CASSANDRA_PASSWORD", DEFAULT_PASSWORD))
+
+
 class HistoryStore:
     def __init__(self, hosts=None, keyspace="fraud", consistency=None):
         hosts = hosts or os.getenv("CASSANDRA_HOSTS", "localhost").split(",")
@@ -72,7 +84,8 @@ class HistoryStore:
             consistency_level=ConsistencyLevel.name_to_value[level],
             row_factory=dict_factory,
         )
-        self.cluster = Cluster(hosts, execution_profiles={EXEC_PROFILE_DEFAULT: profile})
+        self.cluster = Cluster(hosts, execution_profiles={EXEC_PROFILE_DEFAULT: profile},
+                               auth_provider=auth_provider())
         self.session = self.cluster.connect(keyspace)
         # prepared once: Cassandra parses the query a single time, later calls only send values
         self.insert = self.session.prepare(INSERT)

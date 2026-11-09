@@ -141,6 +141,10 @@ kubectl -n "$NS" create secret generic grafana-admin \
 kubectl -n "$NS" create secret generic alerts-credentials \
   --from-literal=ALERTS_DSN=postgresql://alerts:alerts_dev_only@postgres:5432/fraud \
   --dry-run=client -o yaml | apply
+# scoring-svc's own Cassandra login: may only read and write txn_by_user (docs/cassandra.md)
+kubectl -n "$NS" create secret generic cassandra-credentials \
+  --from-literal=CASSANDRA_USER=scoring --from-literal=CASSANDRA_PASSWORD=scoring_dev_only \
+  --dry-run=client -o yaml | apply
 # model-admin-svc's own login: may only read and add audit rows
 kubectl -n "$NS" create secret generic model-admin-credentials \
   --from-literal=MODEL_ADMIN_DSN=postgresql://model_admin:model_admin_dev_only@postgres:5432/fraud \

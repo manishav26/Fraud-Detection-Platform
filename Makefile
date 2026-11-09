@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st4 st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
+.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st4 k8s-st4-db st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
 keys:
 	./scripts/gen_keys.sh
 
@@ -55,6 +55,13 @@ k8s-st2:
 # ST4: from inside the cluster, only the allowed network paths connect (docs/network.md)
 k8s-st4:
 	python security/tests/st4_network.py
+
+# ST4, database logins: Cassandra's scoring login may only read and write its one table
+k8s-st4-db:
+	CQLSH="kubectl -n fraud exec -i cassandra-0 -- cqlsh" ./security/tests/st4_cassandra_logins.sh
+
+st4-db:
+	./security/tests/st4_cassandra_logins.sh
 
 # ST2: every role calls every route and is checked against the roles table (docs/access.md)
 st2:

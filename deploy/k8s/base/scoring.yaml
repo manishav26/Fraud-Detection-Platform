@@ -30,6 +30,7 @@ spec:
           imagePullPolicy: Never
           envFrom:
             - configMapRef: {name: scoring-config}
+            - secretRef: {name: cassandra-credentials}   # its own Cassandra login
           ports:
             - {name: http, containerPort: 8000}
           volumeMounts:

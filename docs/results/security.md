@@ -7,7 +7,7 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 | ST1 | Forged, expired, altered and `alg: none` tokens | **pass**: 1,000 of 1,000 got 401, none reached ingest (cluster) | below; `make k8s-st1` |
 | ST2 | Each role calls every route | **pass**: all 32 calls (8 routes, including the week 4 model routes) match the roles table, compose and cluster | below; `make st2`; `docs/results/model_admin.md` |
 | ST3 | Pod outside the mesh calls scoring directly | pending (week 4) | |
-| ST4 | Every workload and a pod with no labels try every pod and port | **pass** (cluster): only the 23 allowed paths connect; the intruder pod reaches nothing. Before the policies, every pod reached every port | below; `make k8s-st4`; `docs/network.md` |
+| ST4 | Every workload and a pod with no labels try every pod and port | **pass** (cluster): only the 23 allowed paths connect; the intruder pod reaches nothing. Before the policies, every pod reached every port. Cassandra logins: scoring may only read and write its one table (10 of 10 checks) | below; `make k8s-st4`; `docs/network.md` |
 | ST5 | Schemathesis fuzzing | pending (week 5) | |
 | ST6 | Injection strings | pending (week 5) | |
 | ST7 | One client floods against its limit | **limit: pass** (excess gets 429, held to ≤50/s). **Isolation: not shown on a laptop** (others' p95 +30% and +61% vs allowed traffic, within run-to-run noise); rerun on separate machines in week 5 | below; `make st7` |
@@ -115,4 +115,26 @@ payments got 300 answers, so no allowed path was missed.
 Two test details found on the first run: k3s's enforcer **rejects** a blocked connection at once
 rather than dropping it, so a refusal counts as blocked (every port tried is listening); and a pod
 connecting to its own address never leaves the pod, so it is never a target for itself.
+
+### ST4, database logins (k3d cluster, 8 Nov; `make k8s-st4-db`)
+
+Until this step Cassandra had no login at all. Now:
+
+| Login | Statement | Expected | Got |
+|---|---|---|---|
+| scoring | `SELECT txn_id FROM fraud.txn_by_user LIMIT 1` | ok | ok |
+| scoring | `SELECT role FROM system_auth.roles` | refused | refused |
+| scoring | `CREATE TABLE fraud.st4_probe ...` | refused | refused |
+| scoring | `DROP TABLE fraud.txn_by_user` | refused | refused |
+| scoring | `CREATE KEYSPACE st4_probe ...` | refused | refused |
+| scoring | `CREATE ROLE st4_probe ...` | refused | refused |
+| scoring | `GRANT SELECT ON ALL KEYSPACES TO scoring` | refused | refused |
+| scoring, wrong password | `SELECT ...` | refused | refused |
+| cassandra (built-in, known password) | `SELECT ...` | refused | refused |
+| fraud_admin | `SELECT ...` | ok | ok |
+
+Afterwards a replay of 600 payments got 600 answers with 0 scored without history (scoring logs
+in as `scoring`), and `make k8s-read-timing` worked as `fraud_admin` through its tunnel (p95
+6-8 ms). Limit: Cassandra's MODIFY also allows DELETE and TRUNCATE on that table
+(`docs/cassandra.md`).
 

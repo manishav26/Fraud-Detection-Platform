@@ -166,3 +166,17 @@ def test_every_pod_has_its_own_account_and_no_api_token(kind):
         assert spec.get("serviceAccountName") == name, name
         if name != "prometheus":   # it reads the Kubernetes API
             assert spec.get("automountServiceAccountToken") is False, name
+
+
+def test_cassandra_checks_logins_and_scoring_has_its_own():
+    cassandra = next(d for d in DOCS if d["kind"] == "StatefulSet"
+                     and d["metadata"]["name"] == "cassandra")
+    start = " ".join(container(cassandra)["args"])
+    assert "authenticator: PasswordAuthenticator" in start
+    assert "authorizer: CassandraAuthorizer" in start
+    refs = [e.get("secretRef", {}).get("name") for e in container(DEPLOYMENTS["scoring-svc"])["envFrom"]]
+    assert "cassandra-credentials" in refs
+    schema = (BASE.parents[2] / "scripts" / "create_schema.sh").read_text()
+    assert "GRANT SELECT ON fraud.txn_by_user TO scoring" in schema
+    assert "GRANT MODIFY ON fraud.txn_by_user TO scoring" in schema
+    assert "GRANT ALL" not in schema and "SUPERUSER = true" in schema   # only fraud_admin
