@@ -5,9 +5,9 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 | ID | Test | Result | Evidence |
 |----|------|--------|----------|
 | ST1 | Forged, expired, altered and `alg: none` tokens | **pass**: 1,000 of 1,000 got 401, none reached ingest (cluster) | below; `make k8s-st1` |
-| ST2 | Each role calls every route | **pass**: all 32 calls (8 routes, including the week 4 model routes) match the roles table, compose and cluster | below; `make st2`; `docs/results/model_admin.md` |
+| ST2 | Each role calls every route | **pass**: all 50 calls (10 routes, 5 callers, including the week 4 model and case-system routes) match the roles table (cluster, 9 Nov) | below; `make st2`; `docs/results/model_admin.md` |
 | ST3 | A pod outside the mesh, allowed by the network rules, calls scoring's `POST /score` | **pass** (cluster): refused with 403; the same call from a real, meshed ingest pod answered 200 | below; `make k8s-st3`; `docs/mtls.md` |
-| ST4 | Every workload and a pod with no labels try every pod and port | **pass** (cluster): only the 23 allowed paths connect; the intruder pod reaches nothing. Before the policies, every pod reached every port. Cassandra logins: scoring may only read and write its one table, and the old dev passwords are refused (12 of 12 checks) | below; `make k8s-st4`; `docs/network.md` |
+| ST4 | Every workload and a pod with no labels try every pod and port | **pass** (cluster): only the allowed paths connect (25 since the SIEM); the intruder pod reaches nothing. Before the policies, every pod reached every port. Cassandra logins: scoring may only read and write its one table, and the old dev passwords are refused (12 of 12 checks) | below; `make k8s-st4`; `docs/network.md` |
 | ST5 | Schemathesis fuzzing | pending (week 5) | |
 | ST6 | Injection strings | pending (week 5) | |
 | ST7 | One client floods against its limit | **limit: pass** (excess gets 429, held to ≤50/s). **Isolation: not shown on a laptop** (others' p95 +30% and +61% vs allowed traffic, within run-to-run noise); rerun on separate machines in week 5 | below; `make st7` |
@@ -34,7 +34,27 @@ Each payment carried a bad token; `txn.raw` was counted before and after.
 
 All 1,000 refused with 401. `txn.raw`: 31,723 messages before and after, so none reached ingest.
 
-## ST2: roles (compose and cluster, 4 Nov; identical)
+## ST2: roles (cluster, 9 Nov)
+
+With the week 4 model routes (step 6) and the case-system routes and role (step 7):
+
+| Route | no token | client | analyst | admin | case-system |
+|---|---|---|---|---|---|
+| Send a payment | 401 | 200 | 403 | 403 | 403 |
+| List cases | 401 | 403 | 200 | 200 | 403 |
+| Read a case | 401 | 403 | 404 | 404 | 403 |
+| Resolve a case | 401 | 403 | 404 | 403 | 403 |
+| Case status by payment | 401 | 403 | 404 | 403 | 404 |
+| Write back a decision | 401 | 403 | 403 | 403 | 404 |
+| See the live model | 401 | 403 | 403 | 200 | 403 |
+| Model history | 401 | 403 | 403 | 200 | 403 |
+| Promote a model | 401 | 403 | 403 | 400 | 403 |
+| Roll back the model | 401 | 403 | 403 | 400 | 403 |
+
+The case system can't reach the analyst or model routes, and analysts can't write back as the
+case system. 404 and 400 mean allowed (no such case; an unsigned promotion), so nothing real changes.
+
+### First run (compose and cluster, 4 Nov; identical)
 
 | Route | no token | client | analyst | admin |
 |---|---|---|---|---|
@@ -198,3 +218,21 @@ The rotation broke nothing: the audit chain checked out with the new owner passw
 (upload, register, download through the alias), and a 300-payment replay got 300 answers of
 200, 0 degraded. Its latency (p95 1.7 s) was measured within 2 minutes of every pod restarting,
 which is the known warm-up effect (`docs/results/baseline.md`), not the passwords.
+
+## SIEM hook (k3d cluster, 9 Nov)
+
+Threat 9 (someone denies or hides a change): every audit row, with its hash, goes to the
+security team's SIEM (`docs/siem.md`). `make k8s-siem-check`, as the case system through Kong:
+
+| Check | Result |
+|---|---|
+| Case status by transaction id, as `case-mgmt` | 200, `open` |
+| Write back a decision | 200, `not_fraud`, audit row with its ticket number |
+| Write back the same case again | **409**: a decision is never overwritten |
+| Audit row -> shown in the SIEM | **1.0 s** |
+| SIEM stopped 30 s while a case is written back | the event arrived **42.3 s** after its row: the 30 s outage plus the restart. Nothing lost |
+
+An earlier run, stopped mid-outage, left the SIEM switched off; three rows written meanwhile all
+arrived the moment it came back (the forwarder logged 503s from the mesh and kept them). The check
+now always switches the SIEM back on. On the first deploy, the 2,642 existing audit rows went out in
+6 batches within seconds.
