@@ -8,7 +8,8 @@
 # folder, so it starts with empty state and isn't mixed up with what txn.raw already holds. The
 # job is pointed at it, then put back on txn.raw and its normal checkpoint at the end, even if the
 # run fails. Payments are written straight into the topic (stream/load_raw.py: skips Kong and
-# ingest); the job writes features_by_txn as usual.
+# ingest), as the Redpanda user `tools`, which may write only these two topics (docs/kafka.md);
+# the job writes features_by_txn as usual.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 NS=fraud
@@ -43,8 +44,8 @@ restore() {
 }
 
 echo "1. a fresh topic $TOPIC (6 partitions, like txn.raw)"
-kubectl -n $NS exec -i redpanda-0 -c redpanda -- rpk topic delete "$TOPIC" >/dev/null 2>&1 || true
-kubectl -n $NS exec -i redpanda-0 -c redpanda -- rpk topic create "$TOPIC" -p 6 -r 1
+./scripts/rpk.sh topic delete "$TOPIC" </dev/null >/dev/null 2>&1 || true
+./scripts/rpk.sh topic create "$TOPIC" -p 6 -r 1 </dev/null
 
 trap restore EXIT
 # Ctrl+C or a kill: exit normally, so the EXIT trap above still puts the job back
@@ -54,7 +55,7 @@ if [ "$WHAT" = throughput ]; then
   echo "2. stop the job, write $N payments into $TOPIC"
   kubectl -n $NS scale $STS --replicas=0
   kubectl -n $NS wait --for=delete pod/feature-job-0 --timeout=120s || true
-  ./scripts/k8s_tunnel.sh pod/redpanda-0=9092:9092 -- \
+  ./scripts/k8s_secrets.sh run ./scripts/k8s_tunnel.sh pod/redpanda-0=9092:9092 -- \
     python -m stream.load_raw --topic "$TOPIC" --limit "$N" --prefix "$PREFIX"
   echo "3. start the $JOB job on $TOPIC with empty state"
   kubectl -n $NS set env $STS JOB="$JOB" TOPIC="$TOPIC" CHECKPOINT="/checkpoint/run-$RUN" \
@@ -67,7 +68,7 @@ else
     STARTING_OFFSETS=earliest >/dev/null
   kubectl -n $NS rollout status $STS --timeout=300s
   echo "3. write the first $N stream payments into $TOPIC"
-  ./scripts/k8s_tunnel.sh pod/redpanda-0=9092:9092 -- \
+  ./scripts/k8s_secrets.sh run ./scripts/k8s_tunnel.sh pod/redpanda-0=9092:9092 -- \
     python -m stream.load_raw --topic "$TOPIC" --limit "$N" --prefix "$PREFIX"
 fi
 

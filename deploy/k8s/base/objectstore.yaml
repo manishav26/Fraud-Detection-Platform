@@ -20,7 +20,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}   # the runtime's default syscall filter (Trivy KSV-0118)
       containers:
         - name: objectstore
-          image: rustfs/rustfs:latest
+          image: rustfs/rustfs:1.0.3   # pinned: `latest` was the same image (10 Nov)
           imagePullPolicy: IfNotPresent   # imported by `make k8s-up`, like the compose image
           envFrom:
             - secretRef: {name: objectstore-credentials}

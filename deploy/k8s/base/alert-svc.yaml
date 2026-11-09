@@ -39,6 +39,7 @@ spec:
           envFrom:
             - secretRef: {name: alerts-credentials}   # ALERTS_DSN, with the `alerts` login
             - secretRef: {name: siem-credentials}     # SIEM_TOKEN
+            - secretRef: {name: kafka-alert-svc}      # its Redpanda user: read txn.scored only
           ports:
             - {name: http, containerPort: 8000}
           # Probes (docs/k8s.md). startup: time to connect and load before the others count;

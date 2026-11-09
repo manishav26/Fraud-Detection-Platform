@@ -39,6 +39,7 @@ spec:
             - {name: PROMOTION_PUBLIC_KEY_PATH, value: /promotion/public.pem}
           envFrom:
             - secretRef: {name: model-admin-credentials}   # MODEL_ADMIN_DSN, `model_admin` login
+            - secretRef: {name: kafka-model-admin}   # the only Redpanda user that may write model.events
           ports:
             - {name: http, containerPort: 8000}
           volumeMounts:

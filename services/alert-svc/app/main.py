@@ -41,6 +41,7 @@ from app.cases import (
     resolve_case,
 )
 from app.siem import SiemRefused, forward_once, oldest_unsent
+from kafka_login import aiokafka_options
 from observability.http import instrument
 
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
@@ -82,7 +83,8 @@ async def consume():
     from the last saved position: the unsaved messages are simply read again."""
     while True:
         consumer = AIOKafkaConsumer(TOPIC, bootstrap_servers=KAFKA_BOOTSTRAP, group_id=GROUP,
-                                    enable_auto_commit=False, auto_offset_reset="earliest")
+                                    enable_auto_commit=False, auto_offset_reset="earliest",
+                                    **aiokafka_options())   # docs/kafka.md
         try:
             await consumer.start()
             # autocommit: each case's own transaction (in open_case) decides what is saved

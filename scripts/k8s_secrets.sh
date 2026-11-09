@@ -23,6 +23,14 @@ SECRET_NAMES=(
   OBJECTSTORE_SECRET_KEY       # RustFS: MLflow's model files
   GRAFANA_ADMIN_PASSWORD       # Grafana `admin`
   SIEM_TOKEN                   # alert-svc -> siem-mock (docs/siem.md)
+  # Redpanda users, one per workload (docs/kafka.md)
+  REDPANDA_ADMIN_PASSWORD        # `admin`, the superuser: topics, users, permissions (rpk only)
+  REDPANDA_INGEST_PASSWORD       # `ingest`
+  REDPANDA_SCORING_PASSWORD      # `scoring`
+  REDPANDA_ALERTS_PASSWORD       # `alert-svc`
+  REDPANDA_FEATURES_PASSWORD     # `feature-job`
+  REDPANDA_MODEL_ADMIN_PASSWORD  # `model-admin`
+  REDPANDA_TOOLS_PASSWORD        # `tools`: laptop tools through the tunnel (stream/load_raw.py)
 )
 # sops on macOS looks in ~/Library/Application Support by default; we keep the key here instead
 export SOPS_AGE_KEY_FILE="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}"
@@ -57,6 +65,8 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
       # audit/verify.py uses the database owner; both through a tunnel on localhost
       export CASSANDRA_USER=fraud_admin CASSANDRA_PASSWORD="$CASSANDRA_ADMIN_PASSWORD"
       export AUDIT_DSN="postgresql://fraud:$POSTGRES_PASSWORD@localhost:5432/fraud"
+      # stream/load_raw.py through the Redpanda tunnel: may write only the test topics
+      export KAFKA_USER=tools KAFKA_PASSWORD="$REDPANDA_TOOLS_PASSWORD"
       exec "$@"
       ;;
     show)

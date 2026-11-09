@@ -7,7 +7,7 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 | ST1 | Forged, expired, altered and `alg: none` tokens | **pass**: 1,000 of 1,000 got 401, none reached ingest (cluster) | below; `make k8s-st1` |
 | ST2 | Each role calls every route | **pass**: all 60 calls (10 routes, 6 callers, including the week 4 model and case-system routes and the `tester` role) match the roles table (cluster, 10 Nov) | below; `make st2`; `docs/results/model_admin.md` |
 | ST3 | A pod outside the mesh, allowed by the network rules, calls scoring's `POST /score` | **pass** (cluster): refused with 403; the same call from a real, meshed ingest pod answered 200 | below; `make k8s-st3`; `docs/mtls.md` |
-| ST4 | Every workload and a pod with no labels try every pod and port | **pass** (cluster): only the allowed paths connect (25 since the SIEM); the intruder pod reaches nothing. Before the policies, every pod reached every port. Cassandra logins: scoring may only read and write its one table, and the old dev passwords are refused (12 of 12 checks) | below; `make k8s-st4`; `docs/network.md` |
+| ST4 | Every workload and a pod with no labels try every pod and port | **pass** (cluster): only the allowed paths connect (25 since the SIEM); the intruder pod reaches nothing. Before the policies, every pod reached every port. Cassandra logins: scoring may only read and write its one table, and the old dev passwords are refused (12 of 12 checks). Redpanda logins (week 5): each workload may use only its topics, no login and a wrong password are refused (19 of 19 checks, 10 Nov) | below; `make k8s-st4`, `make k8s-kafka-check`; `docs/network.md`, `docs/kafka.md` |
 | ST5 | Schemathesis fuzzing | pending (week 5) | |
 | ST6 | Injection strings | pending (week 5) | |
 | ST7 | One client floods against its limit | **limit: pass** (excess gets 429, held to ≤50/s). **Isolation: not shown on a laptop** (others' p95 +30% and +61% vs allowed traffic, within run-to-run noise); rerun on separate machines in week 5 | below; `make st7` |
@@ -161,6 +161,41 @@ Afterwards a replay of 600 payments got 600 answers with 0 scored without histor
 in as `scoring`), and `make k8s-read-timing` worked as `fraud_admin` through its tunnel (p95
 6-8 ms). Limit: Cassandra's MODIFY also allows DELETE and TRUNCATE on that table
 (`docs/cassandra.md`).
+
+### ST4, Kafka permissions (k3d cluster, 10 Nov; `make k8s-kafka-check`)
+
+Until week 5 any workload that could connect to Redpanda could read and write every topic. Now
+each logs in as its own user, limited to its topics (`docs/kafka.md`):
+
+| Who | Tries to | Expected | Got |
+|---|---|---|---|
+| no login | list topics | refused | refused |
+| ingest, wrong password | list topics | refused | refused |
+| ingest | write dlq.txn | worked | worked |
+| ingest | write model.events | refused | refused |
+| ingest | read txn.scored | refused | refused |
+| scoring | read model.events | worked | worked |
+| scoring | write model.events | refused | refused |
+| scoring | read txn.raw | refused | refused |
+| alert-svc | read txn.scored | worked | worked |
+| alert-svc | read txn.raw | refused | refused |
+| alert-svc | write txn.scored | refused | refused |
+| feature-job | read txn.raw | worked | worked |
+| feature-job | write txn.raw | refused | refused |
+| feature-job | read txn.scored | refused | refused |
+| model-admin | write txn.raw | refused | refused |
+| model-admin | read txn.scored | refused | refused |
+| tools (laptop) | write txn.raw | refused | refused |
+| tools (laptop) | write model.events | refused | refused |
+| tools (laptop) | read txn.scored | refused | refused |
+
+So only model-admin can publish a promotion, which closes the known limit of step 6
+(`docs/results/model_admin.md`). The allowed writes not tried here were shown working right after:
+a replay of 2,000 payments got 2,000 answers (ingest writing `txn.raw` and `txn.scored`), alert-svc
+kept reading, the feature job read all 4,000 payments sent since its restart, scoring read the live
+promotion, and no service logged a login or permission error.
+ST1 (1,000 of 1,000 refused; its `txn.raw` count now runs through `scripts/rpk.sh` as `admin`),
+ST4's network paths (unchanged) and ST2 (60 of 60) still passed afterwards.
 
 ## ST3: mTLS with Linkerd (k3d cluster, 8 Nov)
 

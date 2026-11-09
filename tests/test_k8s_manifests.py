@@ -277,3 +277,58 @@ def test_every_image_gets_security_updates():
     for dockerfile in (BASE.parents[2] / "services").glob("*/Dockerfile"):
         text = dockerfile.read_text()
         assert "apt-get upgrade" in text and "setuptools==" in text, dockerfile
+
+
+# ---------- Redpanda logins and permissions (week 5, step 1; docs/kafka.md) ----------
+
+KAFKA_USERS = {"ingest-svc": "kafka-ingest", "scoring-svc": "kafka-scoring",
+               "alert-svc": "kafka-alert-svc", "model-admin-svc": "kafka-model-admin"}
+
+
+@pytest.mark.parametrize("name", sorted(KAFKA_USERS))
+def test_each_kafka_client_has_its_own_redpanda_user(name):
+    refs = [e.get("secretRef", {}).get("name") for e in container(DEPLOYMENTS[name]).get("envFrom", [])]
+    assert KAFKA_USERS[name] in refs
+
+
+def test_the_feature_job_has_its_own_redpanda_user():
+    job = next(d for d in DOCS if d["kind"] == "StatefulSet" and d["metadata"]["name"] == "feature-job")
+    refs = [e.get("secretRef", {}).get("name") for e in container(job)["envFrom"]]
+    assert "kafka-feature-job" in refs
+
+
+def test_each_redpanda_user_gets_only_its_topics():
+    script = (BASE.parents[2] / "scripts" / "kafka_security.sh").read_text()
+    grants = {}
+    for line in script.splitlines():
+        if line.startswith("acl --allow-principal") and "--topic" in line:
+            words = line.split()
+            user, ops = words[2], words[words.index("--operation") + 1]
+            for topic in words[words.index("--topic") + 1].split(","):
+                grants.setdefault(user, set()).add((topic, ops))
+    assert grants == {
+        "ingest": {("txn.raw", "write,describe"), ("txn.scored", "write,describe"),
+                   ("dlq.txn", "write,describe")},
+        "scoring": {("model.events", "read,describe")},
+        "alert-svc": {("txn.scored", "read,describe")},
+        "feature-job": {("txn.raw", "read,describe"), ("txn.parity", "read,describe"),
+                        ("txn.bench", "read,describe")},
+        "model-admin": {("model.events", "write,describe")},   # the only writer of promotions
+        "tools": {("txn.parity", "write,describe"), ("txn.bench", "write,describe")},
+    }
+    # users and permissions before logins go on, or the services would be locked out
+    assert script.index("security user") < script.index("acl --allow") < script.index("enable_sasl true")
+
+
+def test_no_image_floats_on_latest():
+    images = [c["image"] for d in DOCS if d["kind"] in ("Deployment", "StatefulSet")
+              for c in d["spec"]["template"]["spec"]["containers"]]
+    compose = (BASE.parents[2] / "compose.yaml").read_text()
+    assert not [i for i in images if i.endswith(":latest") or ":" not in i]
+    assert ":latest" not in compose
+
+
+def test_the_old_ingest_service_is_gone_for_good():
+    services = {d["metadata"]["name"] for d in DOCS if d["kind"] == "Service"}
+    assert "ingest-svc" not in services and "ingest-pods" in services
+    assert "delete service ingest-svc" in (BASE.parents[2] / "scripts" / "k8s_up.sh").read_text()

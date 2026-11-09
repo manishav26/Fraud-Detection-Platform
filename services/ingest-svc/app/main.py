@@ -25,6 +25,7 @@ from fastapi.exceptions import RequestValidationError
 from prometheus_client import Counter, Histogram
 from pydantic import AwareDatetime, BaseModel, Field
 
+from kafka_login import aiokafka_options
 from observability.http import BUCKETS, instrument
 
 SCORING_URL = os.getenv("SCORING_URL", "http://scoring-svc:8000")
@@ -48,6 +49,7 @@ def new_producer():
         acks="all",                 # wait until every replica has the message
         enable_idempotence=True,    # a resend after a network blip is not stored twice
         value_serializer=lambda v: json.dumps(v).encode(),
+        **aiokafka_options(),       # its own Redpanda user on the cluster (docs/kafka.md)
     )
 
 

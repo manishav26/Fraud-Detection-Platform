@@ -8,6 +8,7 @@ WORKDIR /srv
 COPY services/ingest-svc/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY observability observability
+COPY kafka_login.py kafka_login.py
 COPY services/ingest-svc/app app
 # Not root (Trivy DS-0002): code that escapes the app gets no root inside the container
 RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin app

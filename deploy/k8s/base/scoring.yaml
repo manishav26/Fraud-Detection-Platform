@@ -37,6 +37,7 @@ spec:
           envFrom:
             - configMapRef: {name: scoring-config}
             - secretRef: {name: cassandra-credentials}   # its own Cassandra login
+            - secretRef: {name: kafka-scoring}   # its Redpanda user: read model.events only (docs/kafka.md)
           ports:
             - {name: http, containerPort: 8000}
           volumeMounts:

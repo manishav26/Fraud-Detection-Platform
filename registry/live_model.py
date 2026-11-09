@@ -11,6 +11,7 @@ import time
 
 from aiokafka import AIOKafkaConsumer, TopicPartition
 
+from kafka_login import aiokafka_options
 from registry.signing import (
     MODEL_FILES,
     MODEL_NAME,
@@ -113,7 +114,8 @@ async def follow_promotions(live, bootstrap, caught_up):
     """
     retry = []
     while True:
-        consumer = AIOKafkaConsumer(bootstrap_servers=bootstrap, auto_offset_reset="earliest")
+        consumer = AIOKafkaConsumer(bootstrap_servers=bootstrap, auto_offset_reset="earliest",
+                                    **aiokafka_options())   # scoring may only read (docs/kafka.md)
         try:
             await consumer.start()
             partition = TopicPartition(TOPIC, 0)   # the topic has 1 partition (docs/topics.md)

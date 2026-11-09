@@ -48,7 +48,7 @@ keeps the seccomp filter, and every image keeps the security updates.
   differ. Pinning the base by digest would make builds repeatable but needs a regular bump; for
   this project, fresh fixes matter more.
 - **The 8 third-party images keep writable filesystems** (waived above).
-- **`rustfs/rustfs:latest`** is the one image without a version tag; Trivy reports it below HIGH.
-  Pinning it is a small follow-up.
+- **`rustfs/rustfs` is pinned to `1.0.3`** (week 5): the release `latest` pointed to, with the same
+  digest (`sha256:9ca95595…`), so the pin changed nothing we run. Every image now has a version.
 - The cluster's passwords are covered separately: random, and in git only encrypted with SOPS
   and age (part B, `docs/secrets.md`).

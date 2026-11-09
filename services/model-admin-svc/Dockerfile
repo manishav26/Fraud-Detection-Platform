@@ -9,6 +9,7 @@ COPY services/model-admin-svc/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY audit audit
 COPY observability observability
+COPY kafka_login.py kafka_login.py
 # Only the code that checks a promotion: signing needs the private key, which never comes here
 COPY registry/__init__.py registry/signing.py registry/
 COPY services/model-admin-svc/app app

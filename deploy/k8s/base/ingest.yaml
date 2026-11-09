@@ -34,6 +34,8 @@ spec:
           env:
             - {name: SCORING_URL, value: "http://scoring-svc:8000"}
             - {name: KAFKA_BOOTSTRAP, value: "redpanda:29092"}
+          envFrom:
+            - secretRef: {name: kafka-ingest}   # its Redpanda user: write the payment topics only
           ports:
             - {name: http, containerPort: 8000}
           # Probes (docs/k8s.md). startup: time to connect and load before the others count;

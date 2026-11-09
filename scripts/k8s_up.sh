@@ -19,7 +19,7 @@ if [ -n "$(docker compose ps -q 2>/dev/null)" ]; then
 fi
 # Ours: built from this repo, so copied in on every full deploy. Each deployment has the same name.
 OURS=(token-issuer ingest-svc scoring-svc mlflow alert-svc model-admin-svc siem-mock feature-job)
-PUBLIC=(kong:3.7 redpandadata/redpanda:v24.2.7 cassandra:4.1 postgres:16 rustfs/rustfs:latest
+PUBLIC=(kong:3.7 redpandadata/redpanda:v24.2.7 cassandra:4.1 postgres:16 rustfs/rustfs:1.0.3
         prom/prometheus:v3.13.5 grafana/grafana:11.6.7)
 
 # Copy images into every node. Docker Desktop stores images as multi-platform lists, and
@@ -170,6 +170,14 @@ secret features-credentials CASSANDRA_USER=features "CASSANDRA_PASSWORD=$CASSAND
 secret model-admin-credentials "MODEL_ADMIN_DSN=postgresql://model_admin:$MODEL_ADMIN_DB_PASSWORD@postgres:5432/fraud"
 # The SIEM's token: alert-svc presents it, siem-mock checks it (docs/siem.md)
 secret siem-credentials "SIEM_TOKEN=$SIEM_TOKEN"
+# Redpanda users, one per workload; topic permissions limit each (docs/kafka.md)
+secret kafka-ingest KAFKA_USER=ingest "KAFKA_PASSWORD=$REDPANDA_INGEST_PASSWORD"
+secret kafka-scoring KAFKA_USER=scoring "KAFKA_PASSWORD=$REDPANDA_SCORING_PASSWORD"
+secret kafka-alert-svc KAFKA_USER=alert-svc "KAFKA_PASSWORD=$REDPANDA_ALERTS_PASSWORD"
+secret kafka-feature-job KAFKA_USER=feature-job "KAFKA_PASSWORD=$REDPANDA_FEATURES_PASSWORD"
+secret kafka-model-admin KAFKA_USER=model-admin "KAFKA_PASSWORD=$REDPANDA_MODEL_ADMIN_PASSWORD"
+# No pod uses this one: scripts/rpk.sh reads it to run rpk as the superuser
+secret redpanda-admin "REDPANDA_ADMIN_PASSWORD=$REDPANDA_ADMIN_PASSWORD"
 
 # RustFS reads its key only when it starts: restart it if the key changed
 if [ -n "$PREVIOUS_OBJECTSTORE_SECRET_KEY" ] && [ "$PREVIOUS_OBJECTSTORE_SECRET_KEY" != "$OBJECTSTORE_SECRET_KEY" ]; then
@@ -181,6 +189,9 @@ echo "3/5 Linkerd (if missing), then apply the Kustomize base"
 ./scripts/k8s_linkerd.sh
 # Pods whose YAML changed restart by themselves; a changed config map alone restarts nothing
 kubectl apply -k deploy/k8s/base
+# `kubectl apply` never deletes what a manifest no longer has. Left over from earlier versions:
+# the ingest-svc Service, replaced by ingest-pods in week 4 (Kong reaches the pods directly)
+kubectl -n "$NS" delete service ingest-svc --ignore-not-found
 
 if [ "$MODE" = apply ]; then
   shift
@@ -205,10 +216,14 @@ done
 
 echo "4/5 wait for the data services, create topics and tables, set the logins' passwords"
 kubectl -n "$NS" rollout status statefulset/redpanda --timeout=180s
+RPK=./scripts/rpk.sh ./scripts/create_topics.sh
+# Redpanda first: pods restarted by the apply above already have their logins, which Redpanda
+# refuses until logins are on; they retry meanwhile (new ingest pods stay not ready, so the old
+# ones keep serving). Users, then permissions, then logins on (docs/kafka.md).
+./scripts/kafka_security.sh
 kubectl -n "$NS" rollout status statefulset/cassandra --timeout=300s
 kubectl -n "$NS" rollout status statefulset/postgres --timeout=180s
 kubectl -n "$NS" rollout status statefulset/objectstore --timeout=180s
-RPK="kubectl -n $NS exec -i redpanda-0 -- rpk" ./scripts/create_topics.sh
 # Also sets both Cassandra logins to the passwords from the file (from the previous ones if rotating)
 CQLSH="kubectl -n $NS exec -i cassandra-0 -- cqlsh" \
   PREVIOUS_CASSANDRA_ADMIN_PASSWORD="$PREVIOUS_CASSANDRA_ADMIN_PASSWORD" ./scripts/create_schema.sh
@@ -223,7 +238,7 @@ ALTER ROLE mlflow PASSWORD '$MLFLOW_DB_PASSWORD';
 ALTER ROLE alerts PASSWORD '$ALERTS_DB_PASSWORD';
 ALTER ROLE model_admin PASSWORD '$MODEL_ADMIN_DB_PASSWORD';
 SQL
-echo "logins set: Postgres fraud, mlflow, alerts, model_admin; Cassandra fraud_admin, scoring"
+echo "logins set: Postgres fraud, mlflow, alerts, model_admin; Cassandra fraud_admin, scoring, features; Redpanda (7 users)"
 kubectl -n "$NS" create configmap secrets-fingerprint --from-literal=fingerprint="$FINGERPRINT" \
   --dry-run=client -o yaml | apply
 

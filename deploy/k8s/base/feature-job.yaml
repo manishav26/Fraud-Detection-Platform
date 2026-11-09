@@ -46,6 +46,7 @@ spec:
             - {name: PYSPARK_SUBMIT_ARGS, value: "--driver-memory 900m pyspark-shell"}
           envFrom:
             - secretRef: {name: features-credentials}   # its own Cassandra login (write-only)
+            - secretRef: {name: kafka-feature-job}      # its Redpanda user: read the payment topics
           ports:
             - {name: metrics, containerPort: 8000}
           # The metrics server answers as soon as the job starts; Spark needs a minute more. If the

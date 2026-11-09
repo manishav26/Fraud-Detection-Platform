@@ -78,8 +78,9 @@ explanations, not the model call, are what is slow on this CPU. For the gate, ei
 on the machine the platform runs on and set the limit from that, or keep 5 ms as the target and
 treat the laptop as the limit. To decide with Manisha.
 
-## Known limit
+## Known limit (closed in week 5)
 
-Anything that can reach Redpanda could still publish to `model.events` directly, skipping the
-audit row (it still can't forge a signature). Closing this needs Redpanda users and topic
-permissions, planned with week 4's secrets step.
+Anything that could reach Redpanda could publish to `model.events` directly, skipping the audit
+row (it still couldn't forge a signature). Closed by Redpanda users and topic permissions
+(`docs/kafka.md`): only model-admin's user may write `model.events`, and `make k8s-kafka-check`
+shows ingest, scoring and the laptop tools refused.

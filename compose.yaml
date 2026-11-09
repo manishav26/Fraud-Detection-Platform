@@ -40,7 +40,7 @@ services:
       timeout: 3s
       retries: 20
   objectstore:  # S3-compatible store (RustFS); MinIO no longer ships free images or binaries
-    image: rustfs/rustfs:latest
+    image: rustfs/rustfs:1.0.3   # the release `latest` pointed to on 10 Nov (same digest)
     environment:
       RUSTFS_ACCESS_KEY: minio_dev
       RUSTFS_SECRET_KEY: minio_dev_only

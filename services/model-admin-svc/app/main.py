@@ -23,6 +23,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from prometheus_client import Counter
 from pydantic import BaseModel, Field
 
+from kafka_login import aiokafka_options
 from observability.http import instrument
 from registry.signing import MODEL_NAME, TOPIC, InvalidPromotion, verify_promotion
 
@@ -41,8 +42,9 @@ CHANGES = Counter("model_changes_total", "Model change requests by outcome", ["a
 
 
 async def publish(token):
+    # Its Redpanda user is the only one that may write model.events (docs/kafka.md)
     producer = AIOKafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP, acks="all",
-                                enable_idempotence=True)
+                                enable_idempotence=True, **aiokafka_options())
     await producer.start()
     try:
         # key = model name: compaction keeps the latest message per key (docs/topics.md)

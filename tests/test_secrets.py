@@ -26,7 +26,8 @@ def k8s_recipes():
 
 
 def test_the_list_of_passwords_was_read():
-    assert len(NAMES) == 10 and {"POSTGRES_PASSWORD", "SIEM_TOKEN", "CASSANDRA_FEATURES_PASSWORD"} <= set(NAMES)
+    assert len(NAMES) == 17 and {"POSTGRES_PASSWORD", "SIEM_TOKEN", "CASSANDRA_FEATURES_PASSWORD",
+                                 "REDPANDA_ADMIN_PASSWORD", "REDPANDA_TOOLS_PASSWORD"} <= set(NAMES)
 
 
 @pytest.mark.parametrize("path", ["scripts/k8s_up.sh", "scripts/k8s_secrets.sh",
@@ -49,7 +50,9 @@ def test_laptop_tools_get_the_cluster_passwords_from_sops():
 
 @pytest.mark.parametrize("name", NAMES)
 def test_k8s_up_uses_every_password(name):
-    assert f"${name}" in (ROOT / "scripts/k8s_up.sh").read_text()
+    # k8s_up.sh, or scripts/kafka_security.sh which it runs (the Redpanda users, by name)
+    up = (ROOT / "scripts/k8s_up.sh").read_text()
+    assert f"${name}" in up or f":{name}" in (ROOT / "scripts/kafka_security.sh").read_text()
 
 
 def test_k8s_up_sets_every_postgres_login():

@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 import pandas as pd
 
 from features.history import HISTORY_FEATURES, NOVELTY_OF
+from kafka_login import spark_options
 from stream import metrics as m
 from stream import state as st
 from stream.sink import FeatureSink, feature_params, user_params
@@ -81,11 +82,20 @@ def message_schema():
         StructField("attrs", StructType([StructField(c, StringType()) for c in NOVELTY_OF]))])
 
 
+SPARK_GROUP_PREFIX = "spark-kafka-source"   # Spark's default, made explicit
+
+
 def kafka_source(spark):
     """txn.raw as a stream of (value, partition, offset, kafka_t)."""
     from pyspark.sql import functions as F
-    return (spark.readStream.format("kafka")
+    reader = spark.readStream.format("kafka")
+    # Its Redpanda user may only read the payment topics, with Spark's own consumer group
+    # names (prefix spark-kafka-source, set here so the permission can match it; docs/kafka.md)
+    for key, value in spark_options().items():
+        reader = reader.option(key, value)
+    return (reader
            .option("kafka.bootstrap.servers", os.getenv("KAFKA_BOOTSTRAP", "redpanda:29092"))
+           .option("groupIdPrefix", SPARK_GROUP_PREFIX)
            .option("subscribe", TOPIC)
            .option("startingOffsets", os.getenv("STARTING_OFFSETS", "earliest"))
            .option("maxOffsetsPerTrigger", int(os.getenv("MAX_PER_TRIGGER", "20000")))

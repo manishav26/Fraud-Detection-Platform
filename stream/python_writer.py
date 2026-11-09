@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from aiokafka import AIOKafkaConsumer
 from prometheus_client import start_http_server
 
+from kafka_login import aiokafka_options
 from stream import metrics as m
 from stream import state as st
 from stream.sink import FeatureSink, feature_params, parse, user_params
@@ -58,7 +59,7 @@ async def run(bootstrap, start, until_idle, batch):
     # client look up the topic's partitions itself (asking before its first metadata fetch gave
     # none: the first cluster run crashed on that)
     consumer = AIOKafkaConsumer(TOPIC, bootstrap_servers=bootstrap, enable_auto_commit=False,
-                                group_id=None, auto_offset_reset=start)
+                                group_id=None, auto_offset_reset=start, **aiokafka_options())
     await consumer.start()
     sink = FeatureSink()
     states, total, first, last_new = {}, 0, None, time.monotonic()

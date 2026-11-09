@@ -147,12 +147,11 @@ message -> signature OK? -> for this model? -> newer sequence?
   deployment would have one public key in its config.
 - **Someone with write access to the topic can't forge a promotion, but could delete messages,**
   for example with an empty or junk message under the same key, which compaction then keeps. A
-  restarting pod would fall back to the pinned model. Redpanda has no access control yet (week 4).
-- **model-admin-svc is not yet the only way onto `model.events`.** Anything that can reach
-  Redpanda could publish a genuine old promotion again. It would be refused by scoring if its
-  sequence is old, but a promotion signed and never sent could be published without an audit row.
-  Closing this needs Redpanda users and topic permissions (SASL and ACLs), with week 4's network
-  and secrets steps.
+  restarting pod would fall back to the pinned model. Since week 5 only model-admin's Redpanda
+  user may write the topic (`docs/kafka.md`).
+- **model-admin-svc is the only way onto `model.events`** on the cluster since week 5: its
+  Redpanda user is the only one allowed to write it (`docs/kafka.md`). In compose Redpanda is
+  open, so there anything could still publish a signed promotion without an audit row.
 - **Pods can differ for a moment** during a swap, each answering with its own `model_version`.
 - Postgres runs its setup script only when its data folder is empty. If the script changes, the
   volume must be recreated.

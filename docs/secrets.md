@@ -34,6 +34,9 @@ makes it easy to poke at.
 | `OBJECTSTORE_SECRET_KEY` | RustFS | RustFS itself, MLflow |
 | `GRAFANA_ADMIN_PASSWORD` | Grafana `admin` | you, in the browser (`make k8s-password`) |
 | `SIEM_TOKEN` | the SIEM's collector token (week 4, step 7) | alert-svc sends with it, siem-mock checks it (`docs/siem.md`) |
+| `REDPANDA_ADMIN_PASSWORD` | Redpanda superuser `admin` (week 5) | `rpk` in the Redpanda pod only (`scripts/rpk.sh`) |
+| `REDPANDA_INGEST_PASSWORD`, `_SCORING_`, `_ALERTS_`, `_FEATURES_`, `_MODEL_ADMIN_` | one Redpanda user per workload | that workload, through its `kafka-<name>` Secret (`docs/kafka.md`) |
+| `REDPANDA_TOOLS_PASSWORD` | Redpanda user `tools` | laptop tools through the tunnel, via `scripts/k8s_secrets.sh run` |
 
 The token issuer's signing key and the clients' secrets are separate: `make keys` generates them
 into `keys/`, which isn't in git (`docs/access.md`). The promotion key stays on the laptop
@@ -122,6 +125,6 @@ its current password, which is still in the cluster's `cassandra-admin-credentia
   changes them straight after. Services that start before that fail to log in and retry, as
   they already do while the databases start.
 - **The RustFS access key** (`minio_dev`) is a user name, not a secret, and stays as it is.
-- **Redpanda has no logins yet** (week 5: SASL users and ACLs).
+- **Redpanda's logins** (week 5) are in `docs/kafka.md`: one user per workload, limited to its topics.
 - **Rotation briefly breaks open connections:** a pod connected before the change keeps working
   until it reconnects, and the restart that follows replaces it.

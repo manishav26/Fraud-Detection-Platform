@@ -17,6 +17,7 @@ from pathlib import Path
 
 from aiokafka import AIOKafkaProducer
 
+from kafka_login import aiokafka_options
 from load.replay import attr_columns, load_rows, to_request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +26,9 @@ ROOT = Path(__file__).resolve().parents[1]
 async def send(topic, rows, prefix, bootstrap):
     producer = AIOKafkaProducer(bootstrap_servers=bootstrap, acks="all", linger_ms=20,
                                 max_batch_size=1_048_576,
-                                value_serializer=lambda v: json.dumps(v).encode())
+                                value_serializer=lambda v: json.dumps(v).encode(),
+                                # the `tools` user: may write only the test topics (docs/kafka.md)
+                                **aiokafka_options())
     await producer.start()
     attrs, pending, sent = attr_columns(), [], 0
     try:

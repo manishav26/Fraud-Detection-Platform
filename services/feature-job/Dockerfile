@@ -26,6 +26,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && apt-get purge -y curl && apt-get autoremove -y
 COPY features features
 COPY stream stream
+COPY kafka_login.py kafka_login.py
 # Not root (Trivy DS-0002). HOME on /tmp: Spark and Java write small files under it
 RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin app
 USER 10001
