@@ -69,8 +69,23 @@ def test_scoring_copies_are_set_by_its_hpa_only():
     hpa = next(d for d in DOCS if d["kind"] == "HorizontalPodAutoscaler")
     assert hpa["spec"]["scaleTargetRef"]["name"] == "scoring-svc"
     assert (hpa["spec"]["minReplicas"], hpa["spec"]["maxReplicas"]) == (2, 8)
-    target = hpa["spec"]["metrics"][0]["resource"]
+    # The scoring container's own CPU, not the pod's: the pod's sum includes the Linkerd proxy,
+    # which once had no request and left the HPA unable to compute anything (fixed 10 Nov)
+    [metric] = hpa["spec"]["metrics"]
+    assert metric["type"] == "ContainerResource"
+    target = metric["containerResource"]
+    assert target["container"] == container(DEPLOYMENTS["scoring-svc"])["name"] == "scoring-svc"
     assert target["name"] == "cpu" and target["target"]["averageUtilization"] == 60
+
+
+def test_every_injected_proxy_gets_resource_requests():
+    """Linkerd injects a proxy into every pod; the namespace gives each one requests (so the
+    scheduler counts it) and a memory limit, but no CPU limit."""
+    ns = next(d for d in DOCS if d["kind"] == "Namespace")["metadata"]["annotations"]
+    assert ns["linkerd.io/inject"] == "enabled"
+    assert ns["config.linkerd.io/proxy-cpu-request"] and ns["config.linkerd.io/proxy-memory-request"]
+    assert ns["config.linkerd.io/proxy-memory-limit"]
+    assert "config.linkerd.io/proxy-cpu-limit" not in ns
 
 
 def test_scoring_has_no_cpu_limit():

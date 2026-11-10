@@ -31,9 +31,11 @@ NetworkPolicies, now with the mesh's ports).
 | `config.linkerd.io/opaque-ports` | 9042, 29092, 5432 | Cassandra, Redpanda and Postgres aren't HTTP: the proxies encrypt them without trying to read them |
 | Kong's port 8000 (`mesh.yaml`) | `all-unauthenticated` | the public entrance: the laptop and payment clients aren't in the mesh. Kong still checks every token |
 | Prometheus: `skip-outbound-ports: 4191` | | it reads each proxy's metrics directly, so measuring the mesh doesn't depend on it |
+| `config.linkerd.io/proxy-cpu-request`, `proxy-memory-request`, `proxy-memory-limit` | 10m, 20Mi, 128Mi; no CPU limit | (week 5) without requests the scheduler didn't count the proxies, and scoring's HPA couldn't compute (`docs/k8s.md`). Measured use: 10-14 MiB, 3-10m CPU per proxy |
 
 The settings are read when a pod starts. `make k8s-up` restarts our Deployments anyway, and
-restarts a data store once if its pod has no proxy yet.
+restarts a data store once if its pod has no proxy yet. The data stores' proxies get the resource
+requests the next time their pods restart; until then only our services' proxies have them.
 
 ## How it fits with the NetworkPolicies
 
