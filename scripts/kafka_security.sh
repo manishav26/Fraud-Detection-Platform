@@ -20,6 +20,7 @@ USERS=(
   feature-job:REDPANDA_FEATURES_PASSWORD
   model-admin:REDPANDA_MODEL_ADMIN_PASSWORD
   tools:REDPANDA_TOOLS_PASSWORD
+  label-sim:REDPANDA_LABEL_SIM_PASSWORD
 )
 
 # 1. The superuser: everything, for rpk only. Set before logins go on, or no one could manage them.
@@ -56,6 +57,8 @@ acl --allow-principal feature-job --operation read,describe --group spark-kafka-
 acl --allow-principal model-admin --operation write,describe --topic model.events
 acl --allow-principal model-admin --operation idempotent_write --cluster
 acl --allow-principal tools --operation write,describe --topic txn.parity,txn.bench
+# The label service identity (threat 10, ST13): the only one that may write fraud answers
+acl --allow-principal label-sim --operation write,describe --topic labels
 echo "redpanda permissions: set for ${#USERS[@]} users"
 
 # 4. Logins on (no restart needed); this also turns permission checks on

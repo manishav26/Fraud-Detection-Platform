@@ -315,6 +315,7 @@ def test_each_redpanda_user_gets_only_its_topics():
                         ("txn.bench", "read,describe")},
         "model-admin": {("model.events", "write,describe")},   # the only writer of promotions
         "tools": {("txn.parity", "write,describe"), ("txn.bench", "write,describe")},
+        "label-sim": {("labels", "write,describe")},   # the only writer of labels (ST13)
     }
     # users and permissions before logins go on, or the services would be locked out
     assert script.index("security user") < script.index("acl --allow") < script.index("enable_sasl true")

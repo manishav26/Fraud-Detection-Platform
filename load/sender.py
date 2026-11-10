@@ -22,18 +22,29 @@ RETRIES = 3     # for 503 "could not record", with the same txn_id
 BACKOFF = 0.5   # seconds before the first retry, doubled each time
 
 
-class Token:
-    """Gets a JWT for one client, and a new one when it expires (every 15 minutes)."""
+# Payments need a token issued under 5 minutes ago (ingest's replay window, threat 6), so get a
+# new one after 4: waiting for the 401 would cost every request in flight a second try.
+FRESH_FOR = 240   # seconds
 
-    def __init__(self, client, creds):
+
+class Token:
+    """Gets a JWT for one client, a new one every FRESH_FOR seconds, and one on a 401."""
+
+    def __init__(self, client, creds, clock=time.monotonic):
         self.client, self.creds, self.value, self.lock = client, creds, None, asyncio.Lock()
+        self.clock, self.fetched = clock, 0.0
 
     async def refresh(self, old=None):
         async with self.lock:
             if self.value == old:   # nobody refreshed it while we waited
                 r = await self.client.post("/token", json=self.creds)
                 r.raise_for_status()
-                self.value = r.json()["access_token"]
+                self.value, self.fetched = r.json()["access_token"], self.clock()
+        return self.value
+
+    async def current(self):
+        if self.value is None or self.clock() - self.fetched > FRESH_FOR:
+            return await self.refresh(self.value)
         return self.value
 
 
@@ -69,7 +80,7 @@ async def send_one(client, token, req):
     t0 = time.perf_counter()
     try:
         while True:
-            current = token.value
+            current = await token.current()
             r = await post(client, req, current)
             if r.status_code == 401:            # token expired: get a new one, try once more
                 r = await post(client, req, await token.refresh(current))

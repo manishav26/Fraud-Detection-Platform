@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-siem k8s-siem-check k8s-kafka-check k8s-st11 k8s-reset-data pseudonym k8s-pseudonym k8s-probe-attack k8s-spark-parity k8s-spark-throughput k8s-spark-logs spark-smoke k8s-linkerd st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
+.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-siem k8s-siem-check k8s-kafka-check k8s-st11 k8s-st5 k8s-st6 k8s-st12 k8s-reset-data pseudonym k8s-pseudonym k8s-probe-attack k8s-spark-parity k8s-spark-throughput k8s-spark-logs spark-smoke k8s-linkerd st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
 keys:
 	./scripts/gen_keys.sh
 
@@ -297,6 +297,21 @@ k8s-siem-check:
 # topics, rewrites cases' ids, reloads the history). Asks for "yes" first.
 k8s-reset-data:
 	./scripts/k8s_reset_data.sh
+
+# ST5: Schemathesis fuzzes the OpenAPI contract through Kong; no 5xx allowed (CHECKS=all also
+# checks every answer against the contract). Needs pip install -r requirements-dev.txt
+k8s-st5:
+	./scripts/st5_fuzz.sh
+
+# ST6: injection strings in every text field; then run make k8s-verify-audit
+k8s-st6:
+	./scripts/k8s_secrets.sh run ./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- \
+		python security/tests/st6_injection.py
+
+# ST12: the same payment twice changes nothing; a token issued 10 minutes ago is refused
+k8s-st12:
+	./scripts/k8s_secrets.sh run ./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- \
+		python security/tests/st12_replay.py
 
 # ST11: replays 500 payments, then searches every store and log for raw user ids: none allowed
 k8s-st11:

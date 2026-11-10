@@ -36,12 +36,21 @@ SUMMARY = ["n_txns", "last_t", "txn_count_24h", "amt_sum_24h"]
 USER = [f"user_{k}" for k in SUMMARY]
 # One output row per payment: what happened, its features, and the user's summary after it
 OUTPUT_COLUMNS = ["txn_id", "user_id", "t", "kafka_t", "status", *HISTORY_FEATURES, *USER]
+# Unreadable messages (no txn_id, user_id, amount, or a time Spark can't read) are grouped under
+# this key instead of a user: counted as unreadable and dropped, so one bad message can't stop the
+# stream. It can't be a real user id: ingest's ids have no "~" (docs/ingest.md).
+UNREADABLE_KEY = "~unreadable"
 
 
 def apply_group(state_json, rows):
     """One user's payments in one micro-batch -> (new state JSON, output rows as a DataFrame).
     rows: DataFrame with txn_id, user_id, t, amount, the NOVELTY_OF columns, partition, offset,
     kafka_t. Plain pandas, so it is tested without Spark (tests/test_spark_job.py)."""
+    if (rows["user_id"] == UNREADABLE_KEY).all():
+        return state_json or st.dumps(st.empty()), pd.DataFrame(
+            [{"txn_id": r["txn_id"], "user_id": UNREADABLE_KEY, "t": None,
+              "kafka_t": float(r["kafka_t"]), "status": st.UNREADABLE}
+             for r in rows.to_dict("records")], columns=OUTPUT_COLUMNS)
     s = st.loads(state_json)
     rows = rows.sort_values(["t", "partition", "offset"], kind="stable")
     out = []
@@ -59,7 +68,7 @@ def apply_group(state_json, rows):
 
 def batch_rows(pdf, written_at):
     """A micro-batch's output -> (feature rows, user rows, outcome counts, delays) for the sink.
-    Duplicates and late payments write nothing; unknown users get a features row (all missing,
+    Duplicates, late payments and unreadable messages write nothing; unknown users get a features row (all missing,
     as training gives them) but no user_features row."""
     counts = pdf["status"].value_counts().to_dict()
     written = pdf[pdf["status"].isin([st.NEW, st.UNKNOWN_USER])]
@@ -113,15 +122,19 @@ def build_query(spark, sink, source=None, trigger=None):
     from pyspark.sql.types import DoubleType, StringType, StructField, StructType
 
     raw = kafka_source(spark) if source is None else source
+    # try_to_timestamp: a time Spark can't read becomes null instead of failing the whole batch
+    # (a strict cast stopped the query on one fuzzed time, and every restart retried the same
+    # batch: a crash loop). Unreadable rows go to UNREADABLE_KEY and are counted there.
     parsed = (raw.select(F.from_json("value", message_schema()).alias("m"),
                          "partition", "offset", "kafka_t")
-              .where(F.col("m.txn_id").isNotNull() & F.col("m.user_id").isNotNull())
               .select("m.txn_id", "m.user_id", "m.amount",
-                      F.unix_micros(F.to_timestamp("m.ts")).cast("double").alias("t_us"),
+                      (F.unix_micros(F.try_to_timestamp("m.ts")).cast("double") / 1e6).alias("t"),
                       *[F.col(f"m.attrs.{c}").alias(c) for c in NOVELTY_OF],
-                      "partition", "offset", "kafka_t")
-              .withColumn("t", F.col("t_us") / 1e6).drop("t_us")
-              .where(F.col("t").isNotNull() & F.col("amount").isNotNull()))
+                      "partition", "offset", "kafka_t"))
+    readable = (F.col("txn_id").isNotNull() & F.col("user_id").isNotNull()
+                & F.col("t").isNotNull() & F.col("amount").isNotNull())
+    parsed = parsed.withColumn("user_id", F.when(readable, F.col("user_id"))
+                               .otherwise(F.lit(UNREADABLE_KEY)))
 
     output = StructType(
         [StructField("txn_id", StringType()), StructField("user_id", StringType()),

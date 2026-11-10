@@ -47,3 +47,30 @@ def test_probes_are_not_counted_as_traffic():
     assert count("/work") == 1
     assert count("/healthz") is None and count("/readyz") is None
 
+
+
+def test_every_service_answers_422_without_echoing_the_input():
+    """FastAPI's own 422 echoes each bad value, and fails as a 500 on NaN (found in week 5)."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from pydantic import BaseModel
+
+    from observability.http import instrument
+
+    class Body(BaseModel):
+        note: str
+        n: float
+
+    app = FastAPI()
+    instrument(app, "test-svc")
+
+    @app.post("/x")
+    def x(body: Body):
+        return {}
+
+    client = TestClient(app)
+    r = client.post("/x", content='{"note": 5, "n": NaN}', headers={"content-type": "application/json"})
+    assert r.status_code == 422 and "NaN" not in r.text
+    assert all(set(p) == {"loc", "msg", "type"} for p in r.json()["detail"])
+    r = client.post("/x", json={"note": "<script>", "n": "x"})
+    assert r.status_code == 422 and "<script>" not in r.text

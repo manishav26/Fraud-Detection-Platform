@@ -180,9 +180,16 @@ def analyst(request, allowed):
     return actor
 
 
+# Postgres text can't hold a NUL character: refuse it here (422), or saving it would fail as a 500
+# (found while writing ST6). Everything else in a note is stored exactly as sent, as a parameter.
+NO_NUL = r"^[^\x00]*$"
+# The same id characters ingest accepts (docs/ingest.md)
+ID_PATTERN = r"^[A-Za-z0-9._:|-]+$"
+
+
 class Resolution(BaseModel):
     outcome: Literal["fraud", "not_fraud"]
-    note: str = Field(default="", max_length=500)
+    note: str = Field(default="", max_length=500, pattern=NO_NUL)
 
 
 @app.get("/cases")
@@ -220,13 +227,14 @@ async def resolve(request: Request, case_id: int, body: Resolution):
 # ---------- the bank's case-management system (week 4, step 7; docs/siem.md) ----------
 # It knows payments by their transaction id, not by our case numbers.
 
-TxnId = Path(min_length=1, max_length=128)
+TxnId = Path(min_length=1, max_length=128, pattern=ID_PATTERN)
 
 
 class ExternalDecision(BaseModel):
     outcome: Literal["fraud", "not_fraud"]
-    note: str = Field(default="", max_length=500)
-    external_ref: str = Field(default="", max_length=128)   # their ticket number, for the audit row
+    note: str = Field(default="", max_length=500, pattern=NO_NUL)
+    # their ticket number, for the audit row
+    external_ref: str = Field(default="", max_length=128, pattern=NO_NUL)
 
 
 @app.get("/v1/cases/txn/{txn_id}")

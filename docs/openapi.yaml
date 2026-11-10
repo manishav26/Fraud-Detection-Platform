@@ -13,29 +13,29 @@ paths:
               type: object
               required: [txn_id, user_id, amount, ts]
               properties:
-                txn_id: {type: string}
-                user_id: {type: string}
-                amount: {type: number, exclusiveMinimum: 0}
-                ts: {type: string, format: date-time}
-                channel: {type: string, nullable: true}
+                txn_id: {type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:|-]+$", description: "letters, digits and . _ : | - only (ST6)"}
+                user_id: {type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:|-]+$", description: "the card's proxy id; stored only as a pseudonym (docs/privacy.md)"}
+                amount: {type: number, minimum: 0, exclusiveMinimum: true}   # OpenAPI 3.0 form of > 0 (found by ST5)
+                ts: {type: string, format: date-time, description: "with a time zone offset between -12:00 and +14:00, in the years 1970-2099 (UTC); stored in UTC (features/schema.yaml, payment_time)"}
+                channel: {type: string, nullable: true, maxLength: 256}
                 attrs:
                   type: object
-                  maxProperties: 64
-                  description: 51 raw IEEE-CIS columns from features/schema.yaml; any value may be null
+                  additionalProperties: false
+                  description: "the 51 raw IEEE-CIS columns of features/schema.yaml, typed as it says (features/contract.py); any may be left out or null; any other key is refused"
                   properties:
                     card1: {type: number, nullable: true}
                     card2: {type: number, nullable: true}
                     card3: {type: number, nullable: true}
-                    card4: {type: string, nullable: true}
+                    card4: {type: string, nullable: true, maxLength: 256}
                     card5: {type: number, nullable: true}
-                    card6: {type: string, nullable: true}
+                    card6: {type: string, nullable: true, maxLength: 256}
                     addr1: {type: number, nullable: true}
                     addr2: {type: number, nullable: true}
                     dist1: {type: number, nullable: true}
-                    ProductCD: {type: string, nullable: true}
-                    P_emaildomain: {type: string, nullable: true}
-                    R_emaildomain: {type: string, nullable: true}
-                    DeviceType: {type: string, nullable: true}
+                    ProductCD: {type: string, nullable: true, maxLength: 256}
+                    P_emaildomain: {type: string, nullable: true, maxLength: 256}
+                    R_emaildomain: {type: string, nullable: true, maxLength: 256}
+                    DeviceType: {type: string, nullable: true, maxLength: 256}
                     C1: {type: number, nullable: true}
                     C2: {type: number, nullable: true}
                     C3: {type: number, nullable: true}
@@ -65,15 +65,15 @@ paths:
                     D13: {type: number, nullable: true}
                     D14: {type: number, nullable: true}
                     D15: {type: number, nullable: true}
-                    M1: {type: string, nullable: true}
-                    M2: {type: string, nullable: true}
-                    M3: {type: string, nullable: true}
-                    M4: {type: string, nullable: true}
-                    M5: {type: string, nullable: true}
-                    M6: {type: string, nullable: true}
-                    M7: {type: string, nullable: true}
-                    M8: {type: string, nullable: true}
-                    M9: {type: string, nullable: true}
+                    M1: {type: string, nullable: true, maxLength: 256}
+                    M2: {type: string, nullable: true, maxLength: 256}
+                    M3: {type: string, nullable: true, maxLength: 256}
+                    M4: {type: string, nullable: true, maxLength: 256}
+                    M5: {type: string, nullable: true, maxLength: 256}
+                    M6: {type: string, nullable: true, maxLength: 256}
+                    M7: {type: string, nullable: true, maxLength: 256}
+                    M8: {type: string, nullable: true, maxLength: 256}
+                    M9: {type: string, nullable: true, maxLength: 256}
       responses:
         "200":
           description: >-
@@ -94,8 +94,11 @@ paths:
                   cold_start: {type: boolean, description: "true when the user has no trusted history (unknown id or first payment)"}
                   degraded: {type: boolean, description: "true when scored without history because the history store did not answer in time"}
                   probe: {type: boolean, description: "true when probe detection (E6 defense D3) turned an approval into a review: 5 or more payments the model flagged on this card in the 24 h before"}
-        "401": {description: missing or invalid token}
+        "401": {description: "missing or invalid token, or one issued more than 5 minutes ago (replays, threat 6): get a new one"}
+        "403": {description: role not allowed}
+        "413": {description: body over 16 KB}
         "422": {description: body does not match this contract; a copy is kept in dlq.txn}
+        "429": {description: over the client's rate limit}
         "503": {description: could not record the transaction; retry with the same txn_id}
   # The bank's case-management system (week 4, step 7; docs/siem.md)
   /v1/cases/txn/{txn_id}:
@@ -104,7 +107,7 @@ paths:
       description: Roles case-system and analyst. Leaves out the customer id and the amount.
       security: [{bearerAuth: []}]
       parameters:
-        - {name: txn_id, in: path, required: true, schema: {type: string, maxLength: 128}}
+        - {name: txn_id, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:|-]+$"}}
       responses:
         "200":
           description: the case
@@ -114,13 +117,15 @@ paths:
         "401": {description: missing or invalid token}
         "403": {description: role not allowed}
         "404": {description: no case for this transaction (approved payments have none)}
+        "422": {description: not a transaction id}
+        "429": {description: over the rate limit}
   /v1/cases/txn/{txn_id}/decision:
     post:
       summary: Write back the case system's decision
       description: Role case-system only. Resolves the case with an audit row; never overwrites one.
       security: [{bearerAuth: []}]
       parameters:
-        - {name: txn_id, in: path, required: true, schema: {type: string, maxLength: 128}}
+        - {name: txn_id, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._:|-]+$"}}
       requestBody:
         required: true
         content:
@@ -130,8 +135,8 @@ paths:
               required: [outcome]
               properties:
                 outcome: {type: string, enum: [fraud, not_fraud]}
-                note: {type: string, maxLength: 500}
-                external_ref: {type: string, maxLength: 128, description: "the case system's own ticket number; kept in the audit row"}
+                note: {type: string, maxLength: 500, description: "any text but a NUL character"}
+                external_ref: {type: string, maxLength: 128, description: "the case system's own ticket number; kept in the audit row; no NUL character"}
       responses:
         "200":
           description: the resolved case

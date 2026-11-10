@@ -26,6 +26,8 @@ UNKNOWN_PART = "NA"               # features/proxy_id.py writes this for a missi
 
 # What update() did with a payment
 NEW, UNKNOWN_USER, DUPLICATE, LATE = "new", "unknown_user", "duplicate", "late"
+# A message without a readable txn_id, user_id, amount or time: dropped and counted, never fatal
+UNREADABLE = "unreadable"
 
 
 def empty():

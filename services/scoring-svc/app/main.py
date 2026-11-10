@@ -27,8 +27,9 @@ from pathlib import Path
 import yaml
 from fastapi import FastAPI
 from prometheus_client import Counter, Histogram, Info
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from features.contract import TEXT_MAX, Attrs, PaymentTime, as_sent, utc_text
 from features.history import NOVELTY_OF, history_for_one
 from ml.model import FILES, FraudModel
 from observability.http import BUCKETS, instrument
@@ -113,7 +114,7 @@ def history_for(store, req):
         past = store.past(req.user_id, req.ts)
     except HistoryUnavailable:   # score without history rather than fail or delay the payment
         return None, None, False, True
-    values = {c: req.attrs.get(c) for c in NOVELTY_OF}
+    values = {c: getattr(req.attrs, c) for c in NOVELTY_OF}
     features = history_for_one(past, to_datetime(req.ts).timestamp(), req.amount, values)
     return features, past, not past, False
 
@@ -203,9 +204,11 @@ class ScoreRequest(BaseModel):
     txn_id: str
     user_id: str
     amount: float
-    ts: str
-    channel: str | None = None
-    attrs: dict[str, float | str | None] = {}
+    ts: PaymentTime   # the same rule as ingest (features/contract.py)
+    channel: str | None = Field(default=None, max_length=TEXT_MAX)
+    # The same strict contract as ingest (features/contract.py): scoring never trusts input that
+    # skipped ingest's check, and the model only ever sees numbers where it expects numbers
+    attrs: Attrs = Field(default_factory=Attrs)
 
 
 @app.post("/score")
@@ -215,6 +218,8 @@ def score(req: ScoreRequest):
     # One copy for the whole request: a swap during it can't mix two models or names
     model, version = app.state.live.current
     store, request = app.state.store, req.model_dump()
+    request["attrs"] = as_sent(req.attrs)   # as ingest sent them
+    request["ts"] = utc_text(req.ts)
     start = time.perf_counter()
     history, past, cold_start, degraded = history_for(store, req)
     read = time.perf_counter()

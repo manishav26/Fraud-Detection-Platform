@@ -37,7 +37,7 @@ def process(states, records):
     features, users, counts, kafka_times = [], {}, {}, []
     for msg, kafka_t in records:
         if msg is None:
-            counts["unreadable"] = counts.get("unreadable", 0) + 1
+            counts[st.UNREADABLE] = counts.get(st.UNREADABLE, 0) + 1
             continue
         uid = msg["user_id"]
         status, feats, new = st.update(states.get(uid, st.empty()), msg["txn_id"], uid, msg["t"],

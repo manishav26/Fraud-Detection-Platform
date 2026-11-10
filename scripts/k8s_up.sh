@@ -176,6 +176,8 @@ secret kafka-scoring KAFKA_USER=scoring "KAFKA_PASSWORD=$REDPANDA_SCORING_PASSWO
 secret kafka-alert-svc KAFKA_USER=alert-svc "KAFKA_PASSWORD=$REDPANDA_ALERTS_PASSWORD"
 secret kafka-feature-job KAFKA_USER=feature-job "KAFKA_PASSWORD=$REDPANDA_FEATURES_PASSWORD"
 secret kafka-model-admin KAFKA_USER=model-admin "KAFKA_PASSWORD=$REDPANDA_MODEL_ADMIN_PASSWORD"
+# For Manisha's label simulator when it runs on the cluster: write labels only (ST13)
+secret kafka-label-sim KAFKA_USER=label-sim "KAFKA_PASSWORD=$REDPANDA_LABEL_SIM_PASSWORD"
 # The pseudonym key: only ingest turns user ids into pseudonyms (docs/privacy.md)
 secret pseudonym-key "PSEUDONYM_KEY=$PSEUDONYM_KEY"
 # No pod uses this one: scripts/rpk.sh reads it to run rpk as the superuser
