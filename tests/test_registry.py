@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from ml.model import FILES
 from registry import promote as promote_tool
-from registry.register import register
+from registry.register import checked_record, register
 from registry.signing import (
     MODEL_FILES,
     InvalidPromotion,
@@ -246,3 +246,24 @@ def test_broken_model_is_not_uploaded(tmp_path):
 
     with pytest.raises(ValueError):
         register(None, model_folder(tmp_path), validate=broken)   # client is never touched
+
+
+def test_a_folder_that_fails_the_check_gets_no_training_record(tmp_path):
+    """The hash check comes first: a tampered folder is never opened by LightGBM or evaluated."""
+    recorded = []
+
+    def broken(folder):
+        raise ValueError("model.txt does not match its SHA-256 in manifest.json")
+
+    with pytest.raises(ValueError, match="manifest"):
+        checked_record(model_folder(tmp_path), validate=broken,
+                       record=lambda folder, with_metrics: recorded.append(folder))
+    assert recorded == []
+
+
+def test_a_folder_that_passes_gets_its_record(tmp_path):
+    folder = model_folder(tmp_path)
+    record = checked_record(folder, with_metrics=False, validate=lambda f: None,
+                            record=lambda f, with_metrics: {"folder": f, "metrics": with_metrics})
+    assert record == {"folder": folder, "metrics": False}
+

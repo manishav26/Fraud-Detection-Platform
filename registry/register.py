@@ -41,6 +41,14 @@ def register(client, folder, validate=FraudModel.load, record=None):
     return version, hashes
 
 
+def checked_record(folder, with_metrics=True, validate=FraudModel.load, record=training_record):
+    """The folder's training record, made only after the folder passes the same check register()
+    makes: its files must match manifest.json. A tampered or broken folder is refused here, before
+    LightGBM opens its model.txt and before the 1-2 minute evaluation."""
+    validate(folder)
+    return record(folder, with_metrics=with_metrics)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--folder", required=True)
@@ -49,7 +57,7 @@ def main():
     args = p.parse_args()
     print("recording how the model was trained"
           + ("" if args.no_metrics else " (measuring it on days 92-109, 1-2 minutes)") + "...")
-    record = training_record(args.folder, with_metrics=not args.no_metrics)
+    record = checked_record(args.folder, with_metrics=not args.no_metrics)
     mlflow.set_tracking_uri(TRACKING_URI)
     version, hashes = register(MlflowClient(TRACKING_URI, TRACKING_URI), args.folder,
                                record=record)
