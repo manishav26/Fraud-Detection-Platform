@@ -11,11 +11,15 @@ if [ ! -f keys/private.pem ]; then
 fi
 # Promotion signing key: a separate pair, in its own folder, because keys/ is mounted into the
 # token issuer and no container may ever hold this private key. Design: docs/mlflow.md
+# A host with only the public half (the measurement VM, docs/vm.md) verifies promotions signed on
+# the laptop: it must keep that public key, never make a pair of its own and replace it.
 mkdir -p promotion-keys
-if [ ! -f promotion-keys/private.pem ]; then
+if [ ! -f promotion-keys/private.pem ] && [ ! -f promotion-keys/public.pem ]; then
   openssl genrsa -out promotion-keys/private.pem 2048 2>/dev/null
   chmod 600 promotion-keys/private.pem
   openssl rsa -in promotion-keys/private.pem -pubout -out promotion-keys/public.pem 2>/dev/null
+elif [ ! -f promotion-keys/private.pem ]; then
+  echo "promotion-keys: public key only (promotions are signed elsewhere)"
 fi
 python3 - <<'PY'
 import hashlib

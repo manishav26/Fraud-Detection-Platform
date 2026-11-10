@@ -120,7 +120,9 @@ False positives aren't measured live: E6 measured them over 90 days of real paym
 **Result** (`docs/results/e6_live.md`): with D3 on, 0 approvals after 5 flags (45 with it off),
 and clients never saw more than the decision. But the attack beats D3 before the 5th flag on
 about half the cards, not E6's 17.5%: the attacker's own tries become the card's history, so its
-e-mail and device stop looking new. To agree with Manisha.
+e-mail and device stop looking new. Agreed with Manisha (10 Nov): kept as built and reported as a
+finding; the fix (only approved payments make an e-mail or device familiar) needs a retrain, so it
+is future work.
 
 **Limits:** a probe spread across many cards isn't caught (E6 says the same); D3 can't run while
 Cassandra is down; unknown cards aren't checked, which an attacker could use; a probe that wins
