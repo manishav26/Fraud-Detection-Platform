@@ -40,7 +40,7 @@ from ml.experiments.e3_retraining import (
     train,
 )
 from ml.labels.label_sim import SECONDS_PER_DAY
-from ml.train.calibrate import CATEGORICAL, FEATURES, RESULTS, TARGET, load_data
+from ml.train.calibrate import CATEGORICAL, FEATURES, FIGURES, RESULTS, TARGET, load_data
 
 INJECT_AFTER_DAYS = 30        # drift starts 30 days into the stream (day 140)
 GRADUAL_DAYS = 20             # missing fields: full strength 20 days later
@@ -168,6 +168,50 @@ def outcome(alarm_days, start):
             "false alarms": sum(1 for d in alarm_days if d < start)}
 
 
+# ---------- figure ----------
+
+def save_figure(table, false_alarms, path):
+    """One grid: drifts (rows) x detectors (columns); each cell says how fast it was caught."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    drifts = list(dict.fromkeys(table["drift"]))
+    fig, ax = plt.subplots(figsize=(8, 3.6))
+    for i, drift in enumerate([*drifts, "no drift (control)"]):
+        for j, detector in enumerate(DETECTORS):
+            if i < len(drifts):
+                r = table[(table["drift"] == drift) & (table["detector"] == detector)].iloc[0]
+                caught = not r["detected"].startswith("0/")
+                days = r["mean delay (days)"]
+                text = (f"{days:g} day{'' if days == 1 else 's'}\n{r['detected']} runs"
+                        if caught else "missed")
+                color = "#2e7d32" if caught else "#d9d9d9"
+                text_color = "white" if caught else "#555555"
+            else:
+                fa = false_alarms.set_index("detector").loc[detector].iloc[0]
+                text = f"{fa:.2g} false alarm\ndays per run" if fa else "quiet"
+                color = "#c62828" if fa else "#e8f5e9"
+                text_color = "white" if fa else "#2e7d32"
+            ax.add_patch(plt.Rectangle((j, i), 0.96, 0.92, color=color))
+            ax.text(j + 0.48, i + 0.46, text, ha="center", va="center", fontsize=10,
+                    color=text_color)
+    ax.set_xlim(0, len(DETECTORS))
+    ax.set_ylim(len(drifts) + 1, 0)
+    ax.set_xticks([j + 0.48 for j in range(len(DETECTORS))], DETECTORS)
+    ax.set_yticks([i + 0.46 for i in range(len(drifts) + 1)],
+                  [*drifts, "no drift (control)"])
+    ax.tick_params(length=0)
+    ax.xaxis.tick_top()
+    for side in ax.spines.values():
+        side.set_visible(False)
+    ax.set_title("E5: which detector caught which drift, and how many days after it began",
+                 pad=28)
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=150)
+
+
 # ---------- main ----------
 
 def main():
@@ -226,6 +270,7 @@ def main():
     print("\n", table.to_string(index=False))
     print("\ncontrol (no drift injected):\n", false_alarms.to_string(index=False))
 
+    save_figure(table, false_alarms, FIGURES / "e5_detectors.png")
     RESULTS.mkdir(parents=True, exist_ok=True)
     with open(RESULTS / "e5.md", "w") as f:
         f.write("# E5: drift detectors on injected drift (ADWIN vs DDM vs PSI)\n\n")
@@ -242,6 +287,7 @@ def main():
                 f"{CONCEPT_SHARE:.0%} of frauds copy a normal payment's features).\n\n")
         f.write("## Detection delay (days after the drift starts)\n\n")
         f.write(table.to_markdown(index=False) + "\n\n")
+        f.write("![detectors](../figures/e5_detectors.png)\n\n")
         if first_psi_feature:
             pointed = "; ".join(f"{k}: {v}" for k, v in first_psi_feature.items())
             f.write(f"Feature PSI's first alarm pointed at: {pointed} "
@@ -250,7 +296,7 @@ def main():
         f.write(false_alarms.to_markdown(index=False) + "\n\n")
         f.write(f"Counted as days with an alarm over the {last - int(stream['day'].min()) + 1} "
                 "stream days.\n")
-    print("\nsaved docs/results/e5.md")
+    print("\nsaved docs/results/e5.md and docs/figures/e5_detectors.png")
 
 
 if __name__ == "__main__":
