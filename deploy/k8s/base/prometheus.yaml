@@ -35,13 +35,23 @@ metadata:
   name: prometheus
 spec:
   replicas: 1
+  # A new pod must be ready before an old one goes: rollouts never lower capacity
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
   selector:
     matchLabels: {app: prometheus}
   template:
     metadata:
       labels: {app: prometheus}
+      annotations:
+        # Read proxies' metrics directly, not through its own proxy: measuring the mesh must not
+        # depend on it (docs/mtls.md)
+        config.linkerd.io/skip-outbound-ports: "4191"
     spec:
       serviceAccountName: prometheus
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}   # the runtime's default syscall filter (Trivy KSV-0118)
       containers:
         - name: prometheus
           image: prom/prometheus:v3.13.5

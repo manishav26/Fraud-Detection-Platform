@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint logs topics schema db-schema st1 k8s-st1 k8s-st2 st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
+.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-siem k8s-siem-check k8s-kafka-check k8s-probe-attack k8s-spark-parity k8s-spark-throughput k8s-spark-logs spark-smoke k8s-linkerd st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
 keys:
 	./scripts/gen_keys.sh
 
@@ -47,10 +47,34 @@ st1:
 	python security/tests/st1_tokens.py --url $(URL)
 
 k8s-st1:
-	python security/tests/st1_tokens.py --url http://localhost:8080 --rpk "kubectl -n fraud exec -i redpanda-0 -- rpk"
+	python security/tests/st1_tokens.py --url http://localhost:8080 --rpk ./scripts/rpk.sh
 
 k8s-st2:
 	python security/tests/st2_roles.py --url http://localhost:8080
+
+# ST3: a pod outside the mesh, allowed by the network rules, calls scoring: refused (docs/mtls.md)
+k8s-st3:
+	python security/tests/st3_mesh.py
+
+# Install Linkerd if missing, then `linkerd check` (docs/mtls.md)
+k8s-linkerd:
+	./scripts/k8s_linkerd.sh
+
+# ST4: from inside the cluster, only the allowed network paths connect (docs/network.md)
+k8s-st4:
+	python security/tests/st4_network.py
+
+# ST4, database logins: Cassandra's scoring login may only read and write its one table
+k8s-st4-db:
+	./scripts/k8s_secrets.sh run env CQLSH="kubectl -n fraud exec -i cassandra-0 -- cqlsh" ./security/tests/st4_cassandra_logins.sh
+
+st4-db:
+	./security/tests/st4_cassandra_logins.sh
+
+# After make k8s-up: no dev password left in the cluster's Secrets; each Postgres login takes
+# only its encrypted password (docs/secrets.md)
+k8s-secrets-check:
+	./security/tests/secrets_check.sh
 
 # ST2: every role calls every route and is checked against the roles table (docs/access.md)
 st2:
@@ -81,9 +105,22 @@ MODEL_FOLDER ?= models/fraud-lgbm-v1
 register:
 	python -m registry.register --folder $(MODEL_FOLDER)
 
-# Make a registered version live: make promote VERSION=1
+# Make a registered version live, through model-admin-svc, with an audit row. Runs Manisha's
+# promotion gate first and stops if it says keep, unless OVERRIDE="why" (recorded). docs/mlflow.md
+#   make promote VERSION=4 [REASON="..."] [OVERRIDE="..."]      make rollback REASON="..."
 promote:
-	python -m registry.promote --version $(VERSION)
+	python -m registry.promote --version $(VERSION) --reason "$(REASON)" --override "$(OVERRIDE)" --url $(URL)
+
+# Back to the version live before the current one (no gate: it is the way back)
+rollback:
+	python -m registry.promote --rollback --reason "$(REASON)" --url $(URL)
+
+# What is live and every model change, from model-admin-svc (admin token)
+MODEL_HISTORY = TOKEN=$$(python -m load.credentials admin --url $(1)) && \
+	curl -s -H "Authorization: Bearer $$TOKEN" $(1)/v1/model && echo && \
+	curl -s -H "Authorization: Bearer $$TOKEN" "$(1)/v1/model/history?limit=10" && echo
+model-history:
+	@$(call MODEL_HISTORY,$(URL))
 
 # ST9 attack: change a registered model's file behind MLflow's back (docs/results/promotion.md)
 st9-tamper:
@@ -128,6 +165,13 @@ baseline:
 lint:
 	ruff check .
 
+# Supply-chain scans, the same as CI (ST10; docs/supply-chain.md): secrets in git history,
+# vulnerable pinned packages, risky Dockerfile and Kubernetes settings, vulnerable images.
+# Pinned Docker images, nothing to install. One at a time: make scan WHAT=images
+WHAT ?= all
+scan:
+	./scripts/scan.sh $(WHAT)
+
 test:
 	python -m pytest -q
 
@@ -142,9 +186,38 @@ cluster:
 cluster-down:
 	k3d cluster delete fraud
 
-# Build, import and deploy the scoring path to k3d (needs `make cluster`)
+# Everything: build, copy into k3d, config, YAML, tables, restart all (needs `make cluster`).
+# Slow; needed the first time and when a service is added. Docs: docs/k8s.md
 k8s-up:
 	./scripts/k8s_up.sh
+
+# The cluster's passwords, encrypted in git (docs/secrets.md). Adds missing ones; ROTATE=1 makes
+# all new. Then `make k8s-up` changes the logins. One password: make k8s-password NAME=...
+ROTATE ?=
+k8s-secrets:
+	ROTATE=$(ROTATE) ./scripts/gen_secrets.sh
+
+NAME ?= GRAFANA_ADMIN_PASSWORD
+k8s-password:
+	@./scripts/k8s_secrets.sh show $(NAME)
+
+# Config maps, secrets and YAML only, no images (steps like HPA or NetworkPolicies). Pods whose
+# YAML changed restart by themselves; RESTART lists ones that must re-read changed config:
+#   make k8s-apply                    make k8s-apply RESTART="kong scoring-svc"
+RESTART ?=
+k8s-apply:
+	./scripts/k8s_up.sh apply $(RESTART)
+
+# Scale and resilience tests under real load (docs/results/scaling.md), one at a time:
+#   make k8s-resilience TEST=scale     (also kill, rollout, drain; RERUN=1 for kill, drain again)
+TEST ?= scale
+k8s-resilience:
+	PYTHON=python RERUN=$(RERUN) ./scripts/resilience_test.sh $(TEST)
+
+# One of our services after a code change: rebuild, copy in, restart it (about a minute)
+#   make k8s-update SVC=model-admin-svc
+k8s-update:
+	./scripts/k8s_up.sh update $(SVC)
 
 # The cluster's registry, through tunnels (needs `make k8s-up`, and compose stopped). docs/k8s.md
 k8s-mlflow-check:
@@ -155,15 +228,24 @@ REGISTRY_TUNNELS := service/mlflow=5050:5000 pod/redpanda-0=9092:9092
 k8s-register:
 	./scripts/k8s_tunnel.sh $(REGISTRY_TUNNELS) -- python -m registry.register --folder $(MODEL_FOLDER)
 
+# Promotions now go through Kong (port 8080) to model-admin-svc: only MLflow needs a tunnel
 k8s-promote:
-	./scripts/k8s_tunnel.sh $(REGISTRY_TUNNELS) -- python -m registry.promote --version $(VERSION)
+	./scripts/k8s_tunnel.sh service/mlflow=5050:5000 -- python -m registry.promote --version $(VERSION) \
+		--reason "$(REASON)" --override "$(OVERRIDE)" --url http://localhost:8080
+
+k8s-rollback:
+	./scripts/k8s_tunnel.sh service/mlflow=5050:5000 -- python -m registry.promote --rollback \
+		--reason "$(REASON)" --url http://localhost:8080
+
+k8s-model-history:
+	@$(call MODEL_HISTORY,http://localhost:8080)
 
 # Load days 1-109 into the cluster's Cassandra, through a tunnel
 k8s-backfill:
-	./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.backfill
+	./scripts/k8s_secrets.sh run ./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.backfill
 
 k8s-verify-audit:
-	./scripts/k8s_tunnel.sh service/postgres=5432:5432 -- python -m audit.verify
+	./scripts/k8s_secrets.sh run ./scripts/k8s_tunnel.sh service/postgres=5432:5432 -- python -m audit.verify
 
 k8s-st8-tamper:
 	kubectl -n fraud exec -i postgres-0 -- psql -U fraud -d fraud -v ON_ERROR_STOP=1 -v row=$(ROW) -v actor=attacker < security/tests/st8_tamper_audit.sql
@@ -177,18 +259,63 @@ k8s-alert-stats:
 		echo "$$p $$(kubectl -n fraud exec $$p -- python -c "$(ALERT_COUNTS)")"; \
 	done
 
+# The streaming feature job (docs/spark.md). Parity: the first 10,000 stream payments through
+# the job vs training's code, at least 99.9% equal. Throughput: a 100,000-payment backlog.
+# JOB=python runs the Python writer instead. Each uses its own topic, then puts the job back.
+JOB ?= spark
+k8s-spark-parity:
+	./scripts/feature_job_run.sh parity $(JOB)
+
+k8s-spark-throughput:
+	./scripts/feature_job_run.sh throughput $(JOB)
+
+# Spark without a cluster: the real job in its real image (read-only, non-root) on 10,000 payments
+# from files instead of Kafka, compared with training's code (docs/spark.md)
+spark-smoke:
+	python -m stream.spark_smoke prepare
+	docker compose build feature-job
+	docker run --rm --read-only --tmpfs /tmp:size=2g --memory=2g \
+		-v "$(CURDIR)/data/spark-smoke:/srv/data/spark-smoke:ro" \
+		-e PYSPARK_SUBMIT_ARGS="--driver-memory 900m pyspark-shell" \
+		fraud/feature-job:dev python -m stream.spark_smoke run
+
+k8s-spark-logs:
+	kubectl -n fraud logs feature-job-0 -c feature-job --tail=30
+
+# The mock SIEM's view: http://localhost:8088 until Ctrl+C (compose: always on 8088). docs/siem.md
+k8s-siem:
+	kubectl -n fraud port-forward service/siem-mock 8088:8000
+
+# SIEM hook end to end: a case system write-back shows up in the SIEM, and survives the SIEM being
+# down for OUTAGE seconds (0: skip that part). Resolves 1-2 real open cases. docs/siem.md
+OUTAGE ?= 30
+k8s-siem-check:
+	python security/tests/siem_check.py --url http://localhost:8080 --outage $(OUTAGE)
+
+# ST4, Kafka permissions: each Redpanda user tries what it may and may not do (docs/kafka.md)
+k8s-kafka-check:
+	./scripts/k8s_secrets.sh run python security/tests/kafka_acl_check.py
+
+# E6 live (D1 and D3): merchant-1 probes the API with variants of flagged fraud payments; once a
+# card has 5 flagged answers, none may be approved. D3=off: the same with probe detection off for
+# the run (switched back on at the end). Writes about 150 payments to Cassandra. docs/scoring.md
+D3 ?= on
+k8s-probe-attack:
+	D3=$(D3) ./scripts/probe_attack.sh
+
 # Cases in the cluster's Postgres, by status and decision
 k8s-cases:
 	kubectl -n fraud exec postgres-0 -- psql -U fraud -d fraud -c "SELECT status, decision, count(*) FROM cases GROUP BY 1, 2 ORDER BY 1, 2"
 
 k8s-read-timing:
-	./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.read_timing
+	./scripts/k8s_secrets.sh run ./scripts/k8s_tunnel.sh service/cassandra=9042:9042 -- python -m store.read_timing
 
 # ST9 attack on the cluster: change a registered model's file behind MLflow's back
 k8s-st9-tamper:
 	kubectl -n fraud exec -i deploy/mlflow -- python - $(VERSION) < security/tests/st9_tamper_artifact.py
 
-# The dashboard: http://localhost:3000 (admin / grafana_dev_only) until Ctrl+C. docs/metrics.md
+# The dashboard: http://localhost:3000 until Ctrl+C. docs/metrics.md
+# Log in as admin; password: make k8s-password (compose: grafana_dev_only)
 k8s-grafana:
 	kubectl -n fraud port-forward service/grafana 3000:3000
 

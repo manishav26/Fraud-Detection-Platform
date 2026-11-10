@@ -1,0 +1,88 @@
+# model-admin-svc: admin promote and rollback, each with an audit row (week 4, step 6). One copy:
+# admins send a few requests a day, and the audit chain's lock would make copies wait anyway.
+# It holds only the public promotion key: it can check a promotion, never sign one.
+# Design: docs/mlflow.md
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-admin-svc
+spec:
+  replicas: 1
+  # A new pod must be ready before an old one goes: rollouts never lower capacity
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels: {app: model-admin-svc}
+  template:
+    metadata:
+      labels: {app: model-admin-svc}
+      annotations:   # Prometheus reads this pod's metrics (deploy/prometheus/)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: model-admin-svc            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:   # not root, and the runtime's default syscall filter (Trivy KSV-0118)
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: model-admin-svc
+          image: fraud/model-admin-svc:dev
+          imagePullPolicy: Never
+          env:
+            - {name: KAFKA_BOOTSTRAP, value: "redpanda:29092"}
+            - {name: PROMOTION_PUBLIC_KEY_PATH, value: /promotion/public.pem}
+          envFrom:
+            - secretRef: {name: model-admin-credentials}   # MODEL_ADMIN_DSN, `model_admin` login
+            - secretRef: {name: kafka-model-admin}   # the only Redpanda user that may write model.events
+          ports:
+            - {name: http, containerPort: 8000}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}   # the only writable place (scoring downloads models here)
+            - {name: promotion-key, mountPath: /promotion, readOnly: true}
+          # Probes (docs/k8s.md). startup: time to connect and load before the others count;
+          # readiness: traffic only when it can answer; liveness: restart only if it stops
+          # answering for a minute, never for one slow burst
+          startupProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 5
+            failureThreshold: 12   # up to 1 min
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8000}
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          # Kong and the Service keep sending for a moment after a pod is told to stop; wait
+          # before shutting down so those requests are still answered (no 502s in a rollout)
+          lifecycle:
+            preStop: {sleep: {seconds: 5}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true   # nothing in the image can be changed (Trivy KSV-0014)
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 192Mi}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
+        - name: promotion-key
+          configMap: {name: promotion-public-key}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-admin-svc
+spec:
+  selector: {app: model-admin-svc}
+  ports:
+    - {name: http, port: 8000}

@@ -47,7 +47,7 @@ class FakeModel:
 
 class FakeStore:
     def __init__(self, past=(), broken=False):
-        self.past_rows, self.broken, self.saved = list(past), broken, []
+        self.past_rows, self.broken, self.saved, self.rows = list(past), broken, [], []
 
     def past(self, user_id, ts, timeout=None):
         if self.broken:
@@ -58,6 +58,7 @@ class FakeStore:
         if self.broken:
             raise RuntimeError("Cassandra down")
         self.saved.append(txn["txn_id"])
+        self.rows.append(txn)
 
 
 @pytest.fixture
@@ -118,6 +119,19 @@ def test_no_model_folder_means_stub(tmp_path, monkeypatch):
     assert model.explain_one({}) == []
 
 
+def test_pinned_model_gets_the_same_label_as_if_promoted(tmp_path, monkeypatch):
+    model_folder(tmp_path)
+    (tmp_path / "meta.json").write_text('{"info": {"name": "fraud-lgbm-v1"}}')
+    pins = {f: scoring.sha256(tmp_path / f) for f in scoring.FILES}
+    for f, env in scoring.PIN_ENV.items():
+        monkeypatch.setenv(env, pins[f])
+    monkeypatch.setattr(scoring, "MODEL_DIR", tmp_path)
+    monkeypatch.setattr(scoring.FraudModel, "load", staticmethod(lambda folder: "model"))
+    _, version = scoring.load_model()
+    assert version == f"fraud-lgbm-v1-{pins['model.txt'][:8]}"
+    assert version == scoring.model_label(tmp_path, pins["model.txt"])   # the promotion path's
+
+
 def test_deploy_pins_match_the_trained_model():
     folder = ROOT / "models/fraud-lgbm-v1"
     if not (folder / "model.txt").exists():
@@ -125,6 +139,33 @@ def test_deploy_pins_match_the_trained_model():
     env = dict(line.split("=", 1) for line in (ROOT / "deploy/scoring.env").read_text().splitlines()
                if line and not line.startswith("#"))
     scoring.verify_pins(folder, {f: env[v] for f, v in scoring.PIN_ENV.items()})
+
+
+# ---------- health (week 4, step 2) ----------
+
+def test_not_ready_until_model_and_cassandra_are_there():
+    state = scoring.app.state._state
+    saved = dict(state)
+    state.clear()   # as before startup has run
+    try:
+        client = TestClient(scoring.app)
+        r = client.get("/readyz")
+        assert r.status_code == 503 and "model" in r.json()["reason"]
+        assert client.get("/healthz").status_code == 200   # alive, just not ready
+        use_model(FakeModel())
+        assert "Cassandra" in client.get("/readyz").json()["reason"]
+        use_store(FakeStore())
+        assert client.get("/readyz").status_code == 200
+    finally:
+        state.clear()
+        state.update(saved)
+
+
+def test_cassandra_down_later_keeps_scoring_ready():
+    # Degraded answers beat errors: a broken store must not take scoring out of rotation
+    use_model(FakeModel())
+    use_store(FakeStore(broken=True))
+    assert TestClient(scoring.app).get("/readyz").status_code == 200
 
 
 # ---------- scoring a payment ----------
@@ -218,3 +259,66 @@ def test_normal_payment_is_not_degraded(client):
     use_store(FakeStore())
     assert client.post("/score", json=req(KNOWN)).json()["degraded"] is False
     assert client.post("/score", json=req(UNKNOWN)).json()["degraded"] is False
+
+
+# ---------- probe detection (E6 defense D3, store/probe.py) ----------
+
+T = 1_512_900_000.0   # 2017-12-10T10:00:00Z, the time of req()
+
+
+def flagged_past(n, hours_ago=1, flagged=True):
+    return [{"t": T - hours_ago * 3600 - i, "amount": 20.0, "P_emaildomain": "gmail.com",
+             "DeviceType": "mobile", "ProductCD": "W", "flagged": flagged} for i in range(n)]
+
+
+def test_approval_after_five_model_flags_goes_to_review(client):
+    store = use_store(FakeStore(flagged_past(5)))
+    use_model(FakeModel(prob=0.1))
+    holds = sample("scoring_probe_holds_total")
+    body = client.post("/score", json=req(KNOWN)).json()
+    assert body["decision"] == "review" and body["probe"] is True
+    assert body["reasons"][0] == scoring.PROBE_REASON
+    assert sample("scoring_probe_holds_total") == holds + 1
+    assert store.rows[-1]["flagged"] is False   # the model approved it: doesn't count itself
+
+
+def test_four_flags_or_old_flags_dont_hold(client):
+    use_model(FakeModel(prob=0.1))
+    use_store(FakeStore(flagged_past(4)))
+    assert client.post("/score", json=req(KNOWN)).json()["probe"] is False
+    use_store(FakeStore(flagged_past(5, hours_ago=25)))   # aged out of the 24 h window
+    assert client.post("/score", json=req(KNOWN)).json()["decision"] == "approve"
+
+
+def test_held_reviews_dont_count_toward_the_five(client):
+    use_store(FakeStore(flagged_past(5, flagged=False)))
+    use_model(FakeModel(prob=0.1))
+    assert client.post("/score", json=req(KNOWN)).json()["decision"] == "approve"
+
+
+def test_a_decline_stays_a_decline_and_is_saved_as_flagged(client):
+    store = use_store(FakeStore(flagged_past(5)))
+    use_model(FakeModel(prob=0.8))
+    body = client.post("/score", json=req(KNOWN)).json()
+    assert body["decision"] == "decline" and body["probe"] is False
+    assert store.rows[-1]["flagged"] is True
+
+
+def test_unknown_cards_and_degraded_mode_skip_probe_detection(client):
+    use_model(FakeModel(prob=0.1))
+    use_store(FakeStore(flagged_past(5)))
+    assert client.post("/score", json=req(UNKNOWN)).json()["probe"] is False
+    use_store(FakeStore(broken=True))
+    assert client.post("/score", json=req(KNOWN)).json()["decision"] == "approve"
+
+
+def test_probe_detection_can_be_switched_off(client, monkeypatch):
+    monkeypatch.setattr(scoring, "PROBE_DETECTION", False)
+    use_store(FakeStore(flagged_past(5)))
+    use_model(FakeModel(prob=0.1))
+    assert client.post("/score", json=req(KNOWN)).json()["decision"] == "approve"
+
+
+def test_deploy_config_switches_probe_detection_on():
+    env = (ROOT / "deploy/scoring.env").read_text()
+    assert "\nPROBE_DETECTION=on\n" in env

@@ -12,6 +12,8 @@ scrape_configs:
       - {targets: ["scoring-svc:8000"], labels: {app: scoring-svc}}
       - {targets: ["alert-svc:8000"], labels: {app: alert-svc}}
       - {targets: ["token-issuer:8000"], labels: {app: token-issuer}}
+      - {targets: ["model-admin-svc:8000"], labels: {app: model-admin-svc}}
+      - {targets: ["siem-mock:8000"], labels: {app: siem-mock}}
 
   # Kong's prometheus plugin, on its status port (not published to the laptop)
   - job_name: kong

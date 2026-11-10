@@ -76,22 +76,88 @@ paths:
                     M9: {type: string, nullable: true}
       responses:
         "200":
-          description: decision
+          description: >-
+            The decision. Clients (role client) get only txn_id and decision (E6 defense D1:
+            the score and reasons would help someone probing the API). The test-only role
+            tester (load-test) gets every field below; analysts see them in cases.
           content:
             application/json:
               schema:
                 type: object
+                required: [txn_id, decision]
                 properties:
                   txn_id: {type: string}
-                  score: {type: number}
                   decision: {type: string, enum: [approve, review, decline]}
-                  model_version: {type: string}
-                  reasons: {type: array, items: {type: string}, description: "up to 3 features that raised the risk, e.g. C1=72 (+2.32); empty when approved"}
+                  score: {type: number, description: "tester only, like every field below"}
+                  model_version: {type: string, description: "model name plus the first 8 characters of its model.txt SHA-256, e.g. fraud-lgbm-v1-535eb73c; changes whenever the model's files change"}
+                  reasons: {type: array, items: {type: string}, description: "up to 3 features that raised the risk, e.g. C1=72 (+2.32), after probe detection's reason when it held the payment; empty when approved"}
                   cold_start: {type: boolean, description: "true when the user has no trusted history (unknown id or first payment)"}
                   degraded: {type: boolean, description: "true when scored without history because the history store did not answer in time"}
+                  probe: {type: boolean, description: "true when probe detection (E6 defense D3) turned an approval into a review: 5 or more payments the model flagged on this card in the 24 h before"}
         "401": {description: missing or invalid token}
         "422": {description: body does not match this contract; a copy is kept in dlq.txn}
         "503": {description: could not record the transaction; retry with the same txn_id}
+  # The bank's case-management system (week 4, step 7; docs/siem.md)
+  /v1/cases/txn/{txn_id}:
+    get:
+      summary: A case's status, found by the payment's transaction id
+      description: Roles case-system and analyst. Leaves out the customer id and the amount.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: txn_id, in: path, required: true, schema: {type: string, maxLength: 128}}
+      responses:
+        "200":
+          description: the case
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CaseStatus"}
+        "401": {description: missing or invalid token}
+        "403": {description: role not allowed}
+        "404": {description: no case for this transaction (approved payments have none)}
+  /v1/cases/txn/{txn_id}/decision:
+    post:
+      summary: Write back the case system's decision
+      description: Role case-system only. Resolves the case with an audit row; never overwrites one.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: txn_id, in: path, required: true, schema: {type: string, maxLength: 128}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcome]
+              properties:
+                outcome: {type: string, enum: [fraud, not_fraud]}
+                note: {type: string, maxLength: 500}
+                external_ref: {type: string, maxLength: 128, description: "the case system's own ticket number; kept in the audit row"}
+      responses:
+        "200":
+          description: the resolved case
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CaseStatus"}
+        "401": {description: missing or invalid token}
+        "403": {description: role not allowed}
+        "404": {description: no case for this transaction}
+        "409": {description: the case is already resolved}
+        "422": {description: body does not match this contract}
 components:
+  schemas:
+    CaseStatus:
+      type: object
+      properties:
+        case_id: {type: integer}
+        txn_id: {type: string}
+        status: {type: string, enum: [open, fraud, not_fraud]}
+        decision: {type: string, enum: [review, decline]}
+        score: {type: number}
+        reasons: {type: array, items: {type: string}}
+        model_version: {type: string}
+        degraded: {type: boolean}
+        opened_at: {type: string, format: date-time}
+        resolved_by: {type: string, nullable: true}
+        resolved_at: {type: string, format: date-time, nullable: true}
   securitySchemes:
     bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}

@@ -6,12 +6,20 @@ metadata:
   name: mlflow
 spec:
   replicas: 1
+  # A new pod must be ready before an old one goes: rollouts never lower capacity
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
   selector:
     matchLabels: {app: mlflow}
   template:
     metadata:
       labels: {app: mlflow}
     spec:
+      serviceAccountName: mlflow            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}   # the runtime's default syscall filter (Trivy KSV-0118)
       containers:
         - name: mlflow
           image: fraud/mlflow:dev
@@ -35,6 +43,17 @@ spec:
                 - {name: Host, value: localhost}   # MLflow rejects host names it doesn't know
             initialDelaySeconds: 15
             periodSeconds: 5
+          # Restart only after a minute without an answer (docs/k8s.md); it starts in about 15 s
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+              httpHeaders:
+                - {name: Host, value: localhost}
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}

@@ -1,5 +1,5 @@
-# 2 copies of scoring-svc. The model comes from the node's /models folder (your repo's models/,
-# mounted into k3d by `make cluster`), read-only, and is checked against the pins in
+# scoring-svc: 2 to 8 copies, set by its HPA (resilience.yaml). The model comes from the node's
+# /models folder (your repo's models/, mounted into k3d by `make cluster`), read-only, and is checked against the pins in
 # scoring-config before it loads. After that each pod follows signed promotions by itself
 # (docs/mlflow.md): the first pod to start and the last both end up on the promoted model.
 apiVersion: apps/v1
@@ -7,7 +7,11 @@ kind: Deployment
 metadata:
   name: scoring-svc
 spec:
-  replicas: 2
+  # No `replicas`: the HPA sets it. A fixed value here would reset it on every apply.
+  # A new pod must be ready before an old one goes: rollouts never lower capacity
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
   selector:
     matchLabels: {app: scoring-svc}
   template:
@@ -18,28 +22,61 @@ spec:
         prometheus.io/port: "8000"
         prometheus.io/path: "/metrics"
     spec:
+      serviceAccountName: scoring-svc            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:   # not root, and the runtime's default syscall filter (Trivy KSV-0118)
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: scoring-svc
           image: fraud/scoring-svc:dev
           imagePullPolicy: Never
           envFrom:
             - configMapRef: {name: scoring-config}
+            - secretRef: {name: cassandra-credentials}   # its own Cassandra login
+            - secretRef: {name: kafka-scoring}   # its Redpanda user: read model.events only (docs/kafka.md)
           ports:
             - {name: http, containerPort: 8000}
           volumeMounts:
+            - {name: tmp, mountPath: /tmp}   # the only writable place (scoring downloads models here)
             - {name: models, mountPath: /models, readOnly: true}
             - {name: promotion-key, mountPath: /promotion, readOnly: true}
-          # uvicorn opens the port only after startup: model checked and loaded, Cassandra up
-          readinessProbe:
-            tcpSocket: {port: 8000}
+          # Probes (docs/k8s.md). startup: time to connect and load before the others count;
+          # readiness: traffic only when it can answer; liveness: restart only if it stops
+          # answering for a minute, never for one slow burst
+          startupProbe:
+            httpGet: {path: /healthz, port: 8000}
             periodSeconds: 5
+            failureThreshold: 36   # up to 3 min: Cassandra, model load, promotions catch-up
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8000}
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          # Kong and the Service keep sending for a moment after a pod is told to stop; wait
+          # before shutting down so those requests are still answered (no 502s in a rollout)
+          lifecycle:
+            preStop: {sleep: {seconds: 5}}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true   # nothing in the image can be changed (Trivy KSV-0014)
+          # The HPA's 60% target is a share of the CPU request. At the baseline's 30/s a pod used
+          # 0.24-0.33 cores, so 250m would scale up at normal load. No CPU limit on purpose: a
+          # limit pauses (throttles) the process when reached, which shows up as latency spikes
           resources:
-            requests: {cpu: 250m, memory: 256Mi}
+            requests: {cpu: 500m, memory: 256Mi}
             limits: {memory: 1Gi}
       volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
         - name: models
           hostPath: {path: /models, type: Directory}
         - name: promotion-key

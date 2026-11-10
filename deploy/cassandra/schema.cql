@@ -15,5 +15,46 @@ CREATE TABLE IF NOT EXISTS fraud.txn_by_user (
   p_emaildomain  text,
   device_type    text,
   product_cd     text,
+  flagged        boolean,   -- the model flagged it (review or decline): probe detection, D3
   PRIMARY KEY ((user_id), ts, txn_id)
 ) WITH CLUSTERING ORDER BY (ts ASC, txn_id ASC);
+
+-- Added in week 4 (step 7c, store/probe.py). Tables made before then get the column here; rows
+-- written without it (backfill, older scoring) count as not flagged.
+ALTER TABLE fraud.txn_by_user ADD IF NOT EXISTS flagged boolean;
+
+-- Written by the streaming feature job (week 4, step 1; docs/spark.md), read by the parity check
+-- and later by drift monitoring. Never read by scoring.
+
+-- The 12 history features of every payment, as of that payment. One partition per day of
+-- payment time, rows sorted by time: "a day's features" is one in-order read.
+CREATE TABLE IF NOT EXISTS fraud.features_by_txn (
+  day                date,
+  ts                 timestamp,
+  txn_id             text,
+  user_id            text,
+  n_prev_txns        double,
+  txn_count_1h       double,
+  txn_count_24h      double,
+  txn_count_30d      double,
+  amt_sum_24h        double,
+  amt_mean_30d       double,
+  amt_std_30d        double,
+  amount_zscore      double,
+  secs_since_last    double,
+  new_p_emaildomain  double,
+  new_devicetype     double,
+  new_productcd      double,
+  written_at         timestamp,   -- when the job wrote it: written_at - ts is the job's delay
+  PRIMARY KEY ((day), ts, txn_id)
+) WITH CLUSTERING ORDER BY (ts ASC, txn_id ASC);
+
+-- The latest summary of each user's state: the job's per-user state, made visible.
+CREATE TABLE IF NOT EXISTS fraud.user_features (
+  user_id        text PRIMARY KEY,
+  n_txns         int,
+  last_ts        timestamp,
+  txn_count_24h  int,
+  amt_sum_24h    double,
+  updated_at     timestamp
+);

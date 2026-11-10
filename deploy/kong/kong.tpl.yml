@@ -8,7 +8,9 @@ consumers:
 @@CONSUMERS@@
 services:
   - name: ingest
-    url: http://ingest-svc:8000
+    # ingest's pods directly (a headless Service on Kubernetes, an alias in compose), so Kong
+    # balances across them and stops using one that is leaving (docs/k8s.md)
+    url: http://ingest-pods:8000
     routes:
       - name: score
         paths: ["/v1/transactions"]
@@ -16,8 +18,11 @@ services:
         plugins:
           - name: jwt
             config: { claims_to_verify: [exp] }
+          # tester: the test-only load-test client, which also gets the full answer (ingest-svc,
+          # E6 defense D1). The acl plugin passes the role on in X-Consumer-Groups and replaces
+          # any such header the caller sent.
           - name: acl
-            config: { allow: [client] }
+            config: { allow: [client, tester] }
           # A payment is about 3 KB; anything far bigger is refused (413) before ingest reads it
           - name: request-size-limiting
             config: { allowed_payload_size: 16, size_unit: kilobytes }
@@ -50,6 +55,51 @@ services:
             config: { second: 10, limit_by: consumer, policy: local }
           - name: request-size-limiting
             config: { allowed_payload_size: 4, size_unit: kilobytes }
+      # The bank's case-management system (week 4, step 7; docs/siem.md), by transaction id:
+      # read a case's status (it and analysts), write back the decision (it alone).
+      - name: case-status
+        methods: [GET]
+        paths: ["~/v1/cases/txn/[^/]+$"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config: { claims_to_verify: [exp] }
+          - name: acl
+            config: { allow: [case-system, analyst] }
+          - name: rate-limiting
+            config: { second: 10, limit_by: consumer, policy: local }
+      - name: case-decision
+        methods: [POST]
+        paths: ["~/v1/cases/txn/[^/]+/decision$"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config: { claims_to_verify: [exp] }
+          - name: acl
+            config: { allow: [case-system] }
+          - name: rate-limiting
+            config: { second: 10, limit_by: consumer, policy: local }
+          - name: request-size-limiting
+            config: { allowed_payload_size: 4, size_unit: kilobytes }
+  # Changing the live model: admin only (week 4, step 6; docs/mlflow.md). The body is a promotion
+  # already signed on the admin's laptop, a few KB at most.
+  - name: model-admin
+    url: http://model-admin-svc:8000
+    routes:
+      - name: model
+        paths: ["/v1/model"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config: { claims_to_verify: [exp] }
+          - name: acl
+            config: { allow: [admin] }
+          # Admins send a few requests a day; tools send a few back to back (ST2 sends 4 in one
+          # second, `make promote` 2). 2/s refused those, so 5/s, with a per-minute cap as well.
+          - name: rate-limiting
+            config: { second: 5, minute: 60, limit_by: consumer, policy: local }
+          - name: request-size-limiting
+            config: { allowed_payload_size: 8, size_unit: kilobytes }
   - name: token
     url: http://token-issuer:8000
     routes:

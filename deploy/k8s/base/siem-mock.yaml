@@ -1,0 +1,77 @@
+# The mock SIEM (week 4, step 7): receives every audit row from alert-svc, in Splunk's HTTP Event
+# Collector format, and shows the latest ones. Not routed through Kong; the laptop opens it with
+# `make k8s-siem` (http://localhost:8088). One copy: it keeps events in memory, so two copies
+# would each hold half. Design: docs/siem.md
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: siem-mock
+spec:
+  replicas: 1
+  # A new pod must be ready before an old one goes: rollouts never lower capacity
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels: {app: siem-mock}
+  template:
+    metadata:
+      labels: {app: siem-mock}
+      annotations:   # Prometheus reads this pod's metrics (deploy/prometheus/)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: siem-mock            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:   # not root, and the runtime's default syscall filter (Trivy KSV-0118)
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: siem-mock
+          image: fraud/siem-mock:dev
+          imagePullPolicy: Never
+          envFrom:
+            - secretRef: {name: siem-credentials}   # SIEM_TOKEN: senders must present it
+          ports:
+            - {name: http, containerPort: 8000}
+          # Probes (docs/k8s.md)
+          startupProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8000}
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          lifecycle:
+            preStop: {sleep: {seconds: 5}}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}   # the only writable place
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true   # nothing in the image can be changed (Trivy KSV-0014)
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 192Mi}   # 10,000 events of about 1 KB, plus Python
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: siem-mock
+spec:
+  selector: {app: siem-mock}
+  ports:
+    - {name: http, port: 8000}

@@ -4,6 +4,7 @@ Flow per request (design: docs/ingest.md):
   1. FastAPI checks the body against the contract. Bad body -> copy to dlq.txn, return 422.
   2. Save the payment to txn.raw (acks=all, idempotent, key user_id). Fails -> 503, client retries.
   3. Ask scoring-svc for score and decision and return it right away (contract: 200 + decision).
+     Clients see only the decision (E6 defense D1); the test-only `tester` role sees it all.
   4. In the background, publish payment + decision to txn.scored, where alert-svc opens cases.
 """
 
@@ -24,6 +25,7 @@ from fastapi.exceptions import RequestValidationError
 from prometheus_client import Counter, Histogram
 from pydantic import AwareDatetime, BaseModel, Field
 
+from kafka_login import aiokafka_options
 from observability.http import BUCKETS, instrument
 
 SCORING_URL = os.getenv("SCORING_URL", "http://scoring-svc:8000")
@@ -47,6 +49,7 @@ def new_producer():
         acks="all",                 # wait until every replica has the message
         enable_idempotence=True,    # a resend after a network blip is not stored twice
         value_serializer=lambda v: json.dumps(v).encode(),
+        **aiokafka_options(),       # its own Redpanda user on the cluster (docs/kafka.md)
     )
 
 
@@ -90,7 +93,14 @@ async def lifespan(app):
 
 
 app = FastAPI(title="ingest-svc", lifespan=lifespan)
-instrument(app, "ingest-svc")
+def _ready():
+    # Redpanda producer started and the scoring client made (both at startup)
+    if getattr(app.state, "producer", None) is None or getattr(app.state, "http", None) is None:
+        return False, "still starting"
+    return True, ""
+
+
+instrument(app, "ingest-svc", ready=_ready)
 
 
 class Transaction(BaseModel):
@@ -107,17 +117,57 @@ class Decision(BaseModel):
     score: float
     decision: str
     model_version: str
-    reasons: list[str] = []  # up to 3 model reasons; empty when approved
+    reasons: list[str] = []  # up to 3 model reasons, plus probe detection's; empty when approved
     cold_start: bool = False  # true: no trusted history for this user (unknown or new)
     degraded: bool = False    # true: scored without history because Cassandra didn't answer
+    probe: bool = False       # true: probe detection (D3) turned an approval into a review
+
+
+class ShortDecision(BaseModel):
+    """What clients get (E6 defense D1, docs/scoring.md): the score and reasons would tell
+    someone probing the API which change brings a flagged payment closer to approval."""
+    txn_id: str
+    decision: str
+
+
+# Roles that get the full answer: only the test-only load-test client, so replay and load tests
+# can report scores, cold starts and degraded answers. Analysts see it all in cases. Anything
+# else, including a missing or unknown role, gets the short answer: a Kong mistake can't leak it.
+FULL_ANSWER_ROLES = {"tester"}
+
+
+def answer_for(groups_header, decision):
+    """The decision as the caller may see it, from the role Kong passes (X-Consumer-Groups).
+    Kong sets that header itself and replaces one the client sent (acl plugin)."""
+    groups = {g.strip() for g in (groups_header or "").split(",") if g.strip()}
+    if groups & FULL_ANSWER_ROLES:
+        return decision
+    return ShortDecision(txn_id=decision.txn_id, decision=decision.decision)
 
 
 def now():
     return datetime.now(UTC).isoformat()
 
 
+# A reused connection to a scoring pod that is shutting down can break mid-request (the pod
+# closed it). Trying once more opens a fresh connection to a live pod. Safe: scoring the same
+# payment again gives the same answer and writes the same history row. Timeouts are not retried:
+# that would only double a slow wait.
+BROKEN_CONNECTION = (httpx.ConnectError, httpx.ReadError, httpx.WriteError,
+                     httpx.RemoteProtocolError)
+SCORING_RETRIES = Counter("ingest_scoring_retries_total",
+                          "Scoring calls tried again after a broken connection")
+
+
 async def call_scoring(record):
-    r = await app.state.http.post("/score", json=record)
+    try:
+        r = await app.state.http.post("/score", json=record)
+    except BROKEN_CONNECTION as e:
+        SCORING_RETRIES.inc()
+        log.warning("scoring connection broke for %s (%s); trying once more",
+                    record["txn_id"], type(e).__name__)
+        r = await app.state.http.post("/score", json=record)
+    r.raise_for_status()
     return r.json()
 
 
@@ -155,7 +205,8 @@ async def send_to_dlq(request: Request, exc: RequestValidationError):
     return await request_validation_exception_handler(request, exc)
 
 
-@app.post("/v1/transactions/score", response_model=Decision)
+# No response_model: answer_for picks the shape per caller (a union would let FastAPI choose)
+@app.post("/v1/transactions/score", response_model=None)
 async def score_txn(txn: Transaction, request: Request):
     record = txn.model_dump(mode="json")
     start = time.perf_counter()
@@ -176,5 +227,6 @@ async def score_txn(txn: Transaction, request: Request):
         log.warning("slow %s: publish %.0f ms, scoring %.0f ms", txn.txn_id,
                     (published - start) * 1000, (done - published) * 1000)
     decision = Decision(**body)
+    # txn.scored keeps everything: alert-svc and the SIEM need it
     in_background(publish_scored(request.app.state.producer, record, decision.model_dump()))
-    return decision
+    return answer_for(request.headers.get("x-consumer-groups"), decision).model_dump()

@@ -5,8 +5,11 @@ Per request:
      (features/history.py, the same code as training). Unknown or new user -> cold start.
   2. Manisha's model gives a calibrated fraud probability; model.decide() turns it into
      approve / review / decline with the thresholds saved inside the model (config/decision.yaml).
-  3. Review or decline: add the top 3 reasons (TreeSHAP, model.explain_one).
-  4. Save the payment to Cassandra, so the user's next payment sees it.
+  3. Probe detection (D3, store/probe.py): an approval on a card with 5 or more payments the
+     model flagged in the last 24 h becomes a review.
+  4. Review or decline: add the top 3 reasons (TreeSHAP, model.explain_one).
+  5. Save the payment, and whether the model flagged it, to Cassandra: the user's next payment
+     sees it.
 
 At startup the model files must match the SHA-256 values pinned in the deploy config
 (deploy/scoring.env), not only manifest.json in the model folder (threat 11, test ST9). After that,
@@ -30,8 +33,11 @@ from features.history import NOVELTY_OF, history_for_one
 from ml.model import FILES, FraudModel
 from observability.http import BUCKETS, instrument
 from registry.live_model import LiveModel, follow_promotions
+from registry.signing import model_label
 from store.guarded import GuardedStore, HistoryUnavailable
 from store.history import HistoryStore, is_known, to_datetime
+from store.probe import REASON as PROBE_REASON
+from store.probe import hold
 
 MODEL_DIR = Path(os.getenv("MODEL_DIR", "models/fraud-lgbm-v1"))
 DECISION_CONFIG = Path(os.getenv("DECISION_CONFIG", "config/decision.yaml"))
@@ -40,6 +46,8 @@ PROMOTION_KEY = Path(os.getenv("PROMOTION_PUBLIC_KEY_PATH", "promotion-keys/publ
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 CATCH_UP_SECONDS = 30   # at most this long at startup to learn which model is live
 SLOW_MS = 100           # log where the time went for requests slower than this
+# D3 on or off (deploy/scoring.env). Off only to show the attack working (make k8s-probe-attack)
+PROBE_DETECTION = os.getenv("PROBE_DETECTION", "on") != "off"
 log = logging.getLogger("scoring")
 
 # Where each payment's time goes, to find the slow step during slow periods (docs/metrics.md)
@@ -47,6 +55,8 @@ STEP = Histogram("scoring_step_seconds", "Time per scoring step", ["step"], buck
 DECISIONS = Counter("scoring_decisions_total", "Payments scored",
                     ["decision", "cold_start", "degraded"])
 MODEL = Info("scoring_model", "The model answering right now")
+PROBE_HOLDS = Counter("scoring_probe_holds_total",
+                      "Approvals sent to review by probe detection (D3)")
 
 
 def sha256(path):
@@ -86,24 +96,33 @@ def load_model():
     if not (MODEL_DIR / "model.txt").exists():
         log.warning("no model in %s: using the stub (score 0.12)", MODEL_DIR)
         return StubModel(yaml.safe_load(DECISION_CONFIG.read_text())), "stub-0"
-    verify_pins(MODEL_DIR, {f: os.getenv(env) for f, env in PIN_ENV.items()})
+    pins = {f: os.getenv(env) for f, env in PIN_ENV.items()}
+    verify_pins(MODEL_DIR, pins)
     model = FraudModel.load(MODEL_DIR)
-    return model, model.meta["info"]["name"]
+    return model, model_label(MODEL_DIR, pins["model.txt"])   # same label as if promoted
 
 
 def history_for(store, req):
-    """(history features, cold_start, degraded). None = no trusted history: the model sees
-    missing values. cold_start: the user has no history. degraded: we couldn't get it.
+    """(history features, past, cold_start, degraded). None = no trusted history: the model sees
+    missing values, and probe detection can't run. cold_start: the user has no history.
+    degraded: we couldn't get it.
     """
     if not is_known(req.user_id):
-        return None, True, False
+        return None, None, True, False
     try:
         past = store.past(req.user_id, req.ts)
     except HistoryUnavailable:   # score without history rather than fail or delay the payment
-        return None, False, True
+        return None, None, False, True
     values = {c: req.attrs.get(c) for c in NOVELTY_OF}
     features = history_for_one(past, to_datetime(req.ts).timestamp(), req.amount, values)
-    return features, not past, False
+    return features, past, not past, False
+
+
+def probe_check(decision, past, ts):
+    """(final decision, held). Needs the card's history: unknown cards and degraded mode skip it."""
+    if not PROBE_DETECTION or past is None:
+        return decision, False
+    return hold(decision, past, to_datetime(ts).timestamp())
 
 
 def reasons_for(model, decision, request, history):
@@ -167,7 +186,17 @@ def _model_now():
         MODEL.info({"version": live.current[1]})
 
 
-instrument(app, "scoring-svc", before_scrape=_model_now)
+def _ready():
+    # Model loaded and Cassandra connected (both happen at startup). A Cassandra outage later
+    # does not make scoring unready: it still answers, degraded, and that beats an error.
+    if getattr(app.state, "live", None) is None:
+        return False, "model not loaded yet"
+    if getattr(app.state, "store", None) is None:
+        return False, "Cassandra not connected yet"
+    return True, ""
+
+
+instrument(app, "scoring-svc", before_scrape=_model_now, ready=_ready)
 
 
 class ScoreRequest(BaseModel):
@@ -187,16 +216,21 @@ def score(req: ScoreRequest):
     model, version = app.state.live.current
     store, request = app.state.store, req.model_dump()
     start = time.perf_counter()
-    history, cold_start, degraded = history_for(store, req)
+    history, past, cold_start, degraded = history_for(store, req)
     read = time.perf_counter()
     prob = model.predict_one(request, history)
-    decision = model.decide(prob)
+    flagged = model.decide(prob)   # the model's own decision: only this counts toward D3
+    decision, probe = probe_check(flagged, past, req.ts)
     predicted = time.perf_counter()
     reasons = reasons_for(model, decision, request, history)
+    if probe:
+        PROBE_HOLDS.inc()
+        reasons = [PROBE_REASON, *reasons]
     explained = time.perf_counter()
     if is_known(req.user_id):
         try:
-            store.save(request)   # before answering: the user's next payment needs it
+            # before answering: the user's next payment needs it
+            store.save({**request, "flagged": flagged != "approve"})
         except HistoryUnavailable:
             pass   # counted by the store; the payment is still safe in txn.raw
     done = time.perf_counter()
@@ -214,4 +248,4 @@ def score(req: ScoreRequest):
                     (explained - predicted) * 1000, (done - explained) * 1000)
     return {"txn_id": req.txn_id, "score": prob, "decision": decision,
             "model_version": version, "reasons": reasons, "cold_start": cold_start,
-            "degraded": degraded}
+            "degraded": degraded, "probe": probe}

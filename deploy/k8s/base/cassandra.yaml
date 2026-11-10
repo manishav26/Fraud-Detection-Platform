@@ -13,10 +13,22 @@ spec:
     metadata:
       labels: {app: cassandra}
     spec:
+      serviceAccountName: cassandra            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}   # the runtime's default syscall filter (Trivy KSV-0118)
       containers:
         - name: cassandra
           image: cassandra:4.1
           imagePullPolicy: IfNotPresent
+          # Logins and permissions on (week 4, step 3; docs/cassandra.md). The image has no setting
+          # for these, so edit its config, then start it as the image normally does.
+          command: ["sh", "-c"]
+          args:
+            - >-
+              sed -i -e 's/^authenticator:.*/authenticator: PasswordAuthenticator/'
+              -e 's/^authorizer:.*/authorizer: CassandraAuthorizer/' /etc/cassandra/cassandra.yaml
+              && exec docker-entrypoint.sh cassandra -f
           env:
             - {name: MAX_HEAP_SIZE, value: 1G}
             - {name: HEAP_NEWSIZE, value: 256M}
@@ -43,6 +55,8 @@ apiVersion: v1
 kind: Service
 metadata:
   name: cassandra
+  annotations:   # not HTTP: Linkerd encrypts it without reading it (docs/mtls.md)
+    config.linkerd.io/opaque-ports: "9042"
 spec:
   selector: {app: cassandra}
   ports:

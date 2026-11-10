@@ -1,0 +1,92 @@
+# The streaming feature job (week 4, step 1): Spark Structured Streaming in local mode reads
+# txn.raw, keeps per-user state and writes the 12 history features of every payment to Cassandra.
+# Design: docs/spark.md
+#
+# A StatefulSet with one copy, not a Deployment: its checkpoint (offsets and every user's state)
+# lives on its own disk, and two copies writing one checkpoint would corrupt it. A StatefulSet
+# stops the old pod before starting the new one and always gives it the same disk.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: feature-job
+spec:
+  serviceName: feature-job
+  replicas: 1
+  selector:
+    matchLabels: {app: feature-job}
+  template:
+    metadata:
+      labels: {app: feature-job}
+      annotations:   # Prometheus reads this pod's metrics (deploy/prometheus/)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: feature-job            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:   # not root, and the runtime's default syscall filter (Trivy KSV-0118)
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001   # the checkpoint disk is writable by the job
+        seccompProfile: {type: RuntimeDefault}
+      terminationGracePeriodSeconds: 30   # lets a micro-batch finish; the checkpoint covers the rest
+      containers:
+        - name: feature-job
+          image: fraud/feature-job:dev
+          imagePullPolicy: Never
+          env:
+            - {name: KAFKA_BOOTSTRAP, value: "redpanda:29092"}
+            - {name: CASSANDRA_HOSTS, value: "cassandra"}
+            - {name: CHECKPOINT, value: "/checkpoint/feature-job"}
+            # Only used when there is no checkpoint yet; `make k8s-spark-parity` sets latest
+            - {name: STARTING_OFFSETS, value: "earliest"}
+            - {name: MAX_PER_TRIGGER, value: "20000"}
+            # The JVM's heap, set before it starts; Python workers for the per-user step use the rest
+            - {name: PYSPARK_SUBMIT_ARGS, value: "--driver-memory 900m pyspark-shell"}
+          envFrom:
+            - secretRef: {name: features-credentials}   # its own Cassandra login (write-only)
+            - secretRef: {name: kafka-feature-job}      # its Redpanda user: read the payment topics
+          ports:
+            - {name: metrics, containerPort: 8000}
+          # The metrics server answers as soon as the job starts; Spark needs a minute more. If the
+          # streaming query stops, the process exits and Kubernetes restarts it from the checkpoint.
+          startupProbe:
+            tcpSocket: {port: 8000}
+            periodSeconds: 5
+            failureThreshold: 36
+          livenessProbe:
+            tcpSocket: {port: 8000}
+            periodSeconds: 20
+            failureThreshold: 6
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}                 # Spark's scratch space; HOME
+            - {name: checkpoint, mountPath: /checkpoint}   # offsets and per-user state
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true   # nothing in the image can be changed (Trivy KSV-0014)
+          resources:
+            requests: {cpu: 500m, memory: 1Gi}
+            limits: {memory: 2Gi}   # JVM heap 900 MB + JVM overhead + Python workers
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 2Gi}
+  volumeClaimTemplates:
+    - metadata:
+        name: checkpoint
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: 1Gi}
+---
+# Required by the StatefulSet (a stable name for its pod); only Prometheus connects, for metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: feature-job
+spec:
+  clusterIP: None
+  selector: {app: feature-job}
+  ports:
+    - {name: metrics, port: 8000}

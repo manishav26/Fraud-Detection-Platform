@@ -6,6 +6,10 @@ metadata:
   name: kong
 spec:
   replicas: 1
+  # A new pod must be ready before an old one goes: rollouts never lower capacity
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
   selector:
     matchLabels: {app: kong}
   template:
@@ -16,6 +20,10 @@ spec:
         prometheus.io/port: "8100"
         prometheus.io/path: "/metrics"
     spec:
+      serviceAccountName: kong            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}   # the runtime's default syscall filter (Trivy KSV-0118)
       containers:
         - name: kong
           image: kong:3.7
@@ -25,6 +33,9 @@ spec:
             - {name: KONG_DECLARATIVE_CONFIG, value: /kong/kong.yml}
             - {name: KONG_PROXY_LISTEN, value: "0.0.0.0:8000"}
             - {name: KONG_ADMIN_LISTEN, value: "off"}   # no admin API inside the cluster
+            # Kong reuses idle connections to services for 60 s; our services keep them 75 s
+            # (uvicorn --timeout-keep-alive), so Kong always closes first (docs/k8s.md)
+            - {name: KONG_UPSTREAM_KEEPALIVE_IDLE_TIMEOUT, value: "60"}
             # Default is one worker per CPU the node has (12 here): over the memory limit
             - {name: KONG_NGINX_WORKER_PROCESSES, value: "2"}
             # Kong's own metrics (latency per route, 401/403/429 counts) on a separate port
@@ -37,6 +48,12 @@ spec:
           readinessProbe:
             tcpSocket: {port: 8000}
             periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: 8000}
+            periodSeconds: 10
+            failureThreshold: 6
+          lifecycle:
+            preStop: {sleep: {seconds: 5}}   # finish requests already on their way (docs/k8s.md)
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {memory: 512Mi}

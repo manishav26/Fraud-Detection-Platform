@@ -6,12 +6,20 @@ metadata:
   name: grafana
 spec:
   replicas: 1
+  # A new pod must be ready before an old one goes: rollouts never lower capacity
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
   selector:
     matchLabels: {app: grafana}
   template:
     metadata:
       labels: {app: grafana}
     spec:
+      serviceAccountName: grafana            # its own identity (docs/network.md)
+      automountServiceAccountToken: false   # no Kubernetes API token: it never needs one
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}   # the runtime's default syscall filter (Trivy KSV-0118)
       containers:
         - name: grafana
           # 11.6, not 13: Grafana 13's new storage and search index took over 7 CPU cores at

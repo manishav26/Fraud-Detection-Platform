@@ -1,4 +1,16 @@
+# The platform's namespace. Linkerd (week 4, step 4; docs/mtls.md) reads these annotations when a
+# pod starts, so a change here needs the pods restarted.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: fraud
+  annotations:
+    # Every pod gets a Linkerd proxy: connections between pods are encrypted and both ends
+    # proven by certificates tied to their service accounts (mTLS)
+    linkerd.io/inject: enabled
+    # A pod accepts only callers that are in the mesh. Kong's public port is the one exception
+    # (deploy/k8s/base/mesh.yaml); Kubernetes' probes are allowed by Linkerd itself.
+    config.linkerd.io/default-inbound-policy: all-authenticated
+    # Not HTTP: the proxies encrypt these without trying to read them (Cassandra, Redpanda,
+    # Postgres)
+    config.linkerd.io/opaque-ports: "9042,29092,5432"

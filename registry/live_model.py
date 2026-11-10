@@ -11,12 +11,14 @@ import time
 
 from aiokafka import AIOKafkaConsumer, TopicPartition
 
+from kafka_login import aiokafka_options
 from registry.signing import (
     MODEL_FILES,
     MODEL_NAME,
     TOPIC,
     InvalidPromotion,
     model_hashes,
+    model_label,
     verify_promotion,
 )
 
@@ -35,10 +37,6 @@ def download_version(version, folder):
     import mlflow
 
     return mlflow.artifacts.download_artifacts(f"models:/{MODEL_NAME}/{version}", dst_path=folder)
-
-
-def version_label(version):
-    return f"{MODEL_NAME}-v{version}"
 
 
 class LiveModel:
@@ -78,7 +76,8 @@ class LiveModel:
                     raise RefusedModel(f"{f} of version {claims['version']} does not match "
                                        "its signed SHA-256")
             model = self.load(folder)   # fully loaded before anything changes
-        self.current = (model, version_label(claims["version"]))
+            label = model_label(folder, claims["sha256"]["model.txt"])   # checked just above
+        self.current = (model, label)
         self.sequence = claims["sequence"]
         log.warning("swap timing: download %.2f s, check and load %.2f s",
                     downloaded - start, time.perf_counter() - downloaded)
@@ -96,7 +95,8 @@ class LiveModel:
                 log.exception("could not load version %s, keeping %s",
                               claims["version"], self.current[1])
                 return [token]
-            log.warning("now serving %s (sequence %s)", self.current[1], self.sequence)
+            log.warning("now serving %s (registry version %s, sequence %s)",
+                        self.current[1], claims["version"], self.sequence)
             return []
         return []
 
@@ -114,7 +114,8 @@ async def follow_promotions(live, bootstrap, caught_up):
     """
     retry = []
     while True:
-        consumer = AIOKafkaConsumer(bootstrap_servers=bootstrap, auto_offset_reset="earliest")
+        consumer = AIOKafkaConsumer(bootstrap_servers=bootstrap, auto_offset_reset="earliest",
+                                    **aiokafka_options())   # scoring may only read (docs/kafka.md)
         try:
             await consumer.start()
             partition = TopicPartition(TOPIC, 0)   # the topic has 1 partition (docs/topics.md)

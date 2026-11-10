@@ -1,0 +1,7 @@
+# SOPS: which key encrypts which file (week 4, step 5 part B). Design: docs/secrets.md
+# The age public key below can only encrypt. The private half that decrypts is on Urmi's laptop
+# only (~/.config/sops/age/keys.txt), never in git. Another person who should deploy adds their
+# own public key here (comma-separated) and runs `sops updatekeys deploy/k8s/secrets.enc.env`.
+creation_rules:
+  - path_regex: deploy/k8s/secrets\.enc\.env$
+    age: age1gnm8jhvgxp0rvds82pu6ww62m35kqc2ex804jmals9rakanej52sd83mtd

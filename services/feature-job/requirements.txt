@@ -1,0 +1,8 @@
+pyspark==4.2.1
+numpy==2.4.6
+# pandas 2.x here only: PySpark 4.2 warns it doesn't fully support pandas 3 yet
+pandas==2.3.3
+pyarrow==26.0.0
+cassandra-driver==3.30.1
+aiokafka==0.14.0
+prometheus-client==0.26.0

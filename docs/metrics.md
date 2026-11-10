@@ -3,7 +3,7 @@
 Each service has a `/metrics` page that Prometheus reads every 5 seconds. It is reachable inside the
 network only: Kong never routes it, because the numbers reveal internals.
 
-**On the cluster:** `make k8s-grafana`, then http://localhost:3000 (`admin` / `grafana_dev_only`),
+**On the cluster:** `make k8s-grafana`, then http://localhost:3000 (`admin`, password from `make k8s-password`; `docs/secrets.md`),
 dashboard "Fraud platform". `make k8s-prometheus` shows what Prometheus reads, at
 http://localhost:9090/targets.
 

@@ -12,6 +12,7 @@ never create duplicates. Design and reasons: docs/cassandra.md
 import os
 from datetime import UTC, datetime
 
+from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
 from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
 from cassandra.query import ConsistencyLevel, dict_factory
@@ -24,8 +25,12 @@ COLUMNS = {"P_emaildomain": "p_emaildomain", "DeviceType": "device_type",
 
 INSERT = ("INSERT INTO txn_by_user (user_id, ts, txn_id, amount, p_emaildomain, device_type,"
           " product_cd) VALUES (?, ?, ?, ?, ?, ?, ?)")
+# scoring-svc also saves whether the model flagged the payment, for probe detection
+# (store/probe.py). Other writers (backfill, speed test) leave it out, which counts as not flagged.
+INSERT_SCORED = ("INSERT INTO txn_by_user (user_id, ts, txn_id, amount, p_emaildomain, device_type,"
+                 " product_cd, flagged) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
 # Strictly earlier than ts: a payment never counts itself in its own history.
-SELECT = ("SELECT ts, amount, p_emaildomain, device_type, product_cd FROM txn_by_user"
+SELECT = ("SELECT ts, amount, p_emaildomain, device_type, product_cd, flagged FROM txn_by_user"
           " WHERE user_id = ? AND ts < ?")
 
 
@@ -51,14 +56,27 @@ def row_values(txn):
 
 
 def to_past(rows):
-    """Cassandra rows -> the `past` list that features.history.history_for_one expects."""
+    """Cassandra rows -> the `past` list that features.history.history_for_one expects, plus
+    `flagged` (True only if the model flagged it; missing = not flagged) for probe detection."""
     return [{"t": to_datetime(r["ts"]).timestamp(), "amount": r["amount"],
-             **{col: r[cass] for col, cass in COLUMNS.items()}} for r in rows]
+             **{col: r[cass] for col, cass in COLUMNS.items()},
+             "flagged": bool(r.get("flagged"))} for r in rows]
 
 
 def _timeout(seconds):
     # Only when set: passing timeout=None to the driver would mean "wait forever"
     return {} if seconds is None else {"timeout": seconds}
+
+
+# Cassandra checks logins since week 4 (docs/cassandra.md). scoring-svc gets its own login, which
+# may only read and write txn_by_user; the laptop tools (backfill, read timing, parity) default to
+# the admin login. Dev passwords, like Postgres's (scripts/create_schema.sh).
+DEFAULT_USER, DEFAULT_PASSWORD = "fraud_admin", "fraud_admin_dev_only"
+
+
+def auth_provider():
+    return PlainTextAuthProvider(os.getenv("CASSANDRA_USER", DEFAULT_USER),
+                                 os.getenv("CASSANDRA_PASSWORD", DEFAULT_PASSWORD))
 
 
 class HistoryStore:
@@ -72,15 +90,22 @@ class HistoryStore:
             consistency_level=ConsistencyLevel.name_to_value[level],
             row_factory=dict_factory,
         )
-        self.cluster = Cluster(hosts, execution_profiles={EXEC_PROFILE_DEFAULT: profile})
+        self.cluster = Cluster(hosts, execution_profiles={EXEC_PROFILE_DEFAULT: profile},
+                               auth_provider=auth_provider())
         self.session = self.cluster.connect(keyspace)
         # prepared once: Cassandra parses the query a single time, later calls only send values
         self.insert = self.session.prepare(INSERT)
+        self.insert_scored = self.session.prepare(INSERT_SCORED)
         self.select = self.session.prepare(SELECT)
 
     def save(self, txn, timeout=None):
-        """timeout in seconds; None = the driver's default."""
-        self.session.execute(self.insert, row_values(txn), **_timeout(timeout))
+        """timeout in seconds; None = the driver's default. With `flagged` in txn (scoring-svc),
+        that is saved too."""
+        if "flagged" in txn:
+            self.session.execute(self.insert_scored, (*row_values(txn), bool(txn["flagged"])),
+                                 **_timeout(timeout))
+        else:
+            self.session.execute(self.insert, row_values(txn), **_timeout(timeout))
 
     def past(self, user_id, ts, timeout=None):
         return to_past(self.session.execute(self.select, (user_id, to_datetime(ts)),

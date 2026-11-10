@@ -1,0 +1,56 @@
+# Scale and resilience (week 4, step 2). Design and results: docs/k8s.md, docs/results/scaling.md
+#
+# HPA: scoring-svc runs 2 to 8 copies, aiming for 60% of each pod's CPU request (500m), measured by
+# k3s's metrics-server. Up quickly, down slowly, so a short burst doesn't make copies come and go.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: scoring-svc
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: scoring-svc}
+  minReplicas: 2     # never one: a single pod restarting would stop all scoring
+  maxReplicas: 8     # about 1.8 GB of memory at 8; the laptop's limit, not the platform's
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 60}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 15
+      policies:
+        - {type: Pods, value: 2, periodSeconds: 30}    # at most 2 new copies every 30 s
+    scaleDown:
+      stabilizationWindowSeconds: 120                 # 2 minutes of lower load first
+      policies:
+        - {type: Pods, value: 1, periodSeconds: 60}    # then one copy a minute
+---
+# PodDisruptionBudgets: during a voluntary disruption (a node drained for maintenance, a cluster
+# upgrade) Kubernetes keeps at least one copy of each running. They don't stop crashes; the
+# second copy and the probes handle those.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: scoring-svc
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: scoring-svc}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ingest-svc
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: ingest-svc}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: alert-svc
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: alert-svc}

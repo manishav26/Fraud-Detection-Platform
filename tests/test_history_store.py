@@ -40,6 +40,13 @@ def test_to_past_feeds_history_features():
     assert out["new_P_emaildomain"] == 1 and out["new_DeviceType"] == 0
 
 
+def test_to_past_carries_the_models_flag_and_missing_means_not_flagged():
+    row = {"ts": datetime(2026, 1, 1, 10), "amount": 20.0, "p_emaildomain": None,
+           "device_type": None, "product_cd": None}
+    assert [p["flagged"] for p in to_past([{**row, "flagged": True}, {**row, "flagged": None},
+                                           row])] == [True, False, False]
+
+
 # ---------- against a running Cassandra (`make up` + `make schema`); skipped otherwise ----------
 
 @pytest.fixture(scope="module")

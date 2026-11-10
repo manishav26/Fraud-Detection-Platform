@@ -7,24 +7,34 @@
 #   configmap  promotion-public-key  promotion-keys/public.pem  (scoring-svc checks promotions)
 #   configmap  prometheus-config, grafana-datasources, grafana-providers, grafana-dashboards
 #              deploy/prometheus/, deploy/grafana/   (metrics; docs/metrics.md)
-#   secret     grafana-admin   (dev password)
+#   secret     grafana-admin
 #   configmap  postgres-init  deploy/postgres/        (postgres: creates the mlflow database)
 #   secret     postgres-credentials, objectstore-credentials, mlflow-credentials,
-#              alerts-credentials   (dev passwords)
+#              alerts-credentials, model-admin-credentials, cassandra-credentials,
+#              cassandra-admin-credentials, siem-credentials, features-credentials
+#              (passwords from deploy/k8s/secrets.enc.env, decrypted by k8s-up; docs/secrets.md)
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: fraud
 resources:
   - namespace.yaml
+  - serviceaccounts.yaml
+  - network.yaml
+  - mesh.yaml
+  - mesh-ports.yaml
   - redpanda.yaml
   - cassandra.yaml
   - postgres.yaml
   - objectstore.yaml
   - mlflow.yaml
   - alert-svc.yaml
+  - model-admin.yaml
+  - siem-mock.yaml
+  - feature-job.yaml
   - prometheus.yaml
   - grafana.yaml
   - token-issuer.yaml
   - scoring.yaml
   - ingest.yaml
   - kong.yaml
+  - resilience.yaml

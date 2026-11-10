@@ -40,10 +40,55 @@ client -> MLflow server :5000 -> Postgres, database `mlflow`   (versions, aliase
 
 ```
 make register   load-check the folder -> upload -> new version       (not live)
-make promote    download that version -> load-check -> a person checks the hashes
-                -> sign {model, version, hashes, sequence} -> publish to model.events
+make promote    download that version -> load-check -> promotion gate vs the live model
+                -> a person checks the hashes -> sign {model, version, hashes, sequence,
+                action, label, reason, gate} -> POST /v1/model/promote through Kong (admin)
+                -> model-admin-svc: check signature and rules -> audit row -> model.events
                 -> move the `production` alias
+make rollback   the same for the version live before the current one, without the gate
 ```
+
+Until week 4, `make promote` published to `model.events` itself. Now every change goes through
+model-admin-svc, so each one has an audit row naming the admin who sent it.
+
+## Admin promote and rollback (week 4, step 6)
+
+**The signing key stays on the admin's laptop.** model-admin-svc has only the public key: it can
+accept a genuine promotion but never create one. So a stolen admin token alone can't make any
+model live, and the ST9 guarantee ("the key never enters a container") still holds.
+
+| Route (admin only, through Kong) | What it does |
+|---|---|
+| `GET /v1/model` | What is live (version, label, who, when, reason), and `previous`: what a rollback would go back to |
+| `GET /v1/model/history` | Every promotion, rollback and failed publish, newest first |
+| `POST /v1/model/promote` | `{"token": <signed promotion>}` |
+| `POST /v1/model/rollback` | `{"token": <signed promotion of the previous version>}` |
+
+What model-admin-svc checks before publishing (`services/model-admin-svc/app/rules.py`):
+
+| Check | Refused with |
+|---|---|
+| Caller is `admin` (Kong's `acl`, then again from Kong's headers) | 403 |
+| Signature, issuer, audience (the same check scoring makes) | 400 |
+| The message is for this route (`action` promote or rollback) | 409 |
+| Its sequence is newer than every recorded attempt, failed ones too | 409: a token is used once |
+| Promote: the gate's result is in the message; if the gate said keep, a reason is given | 409 |
+| Rollback: a reason is given, and the version is exactly the one live before the current one | 409 |
+
+- **The audit row is saved before publishing.** No model change ever goes out unrecorded. If the
+  publish then fails, a second row (`model_promotion_failed`) says so, and the token can't be
+  reused: signing again gives a new sequence.
+- **Check and record happen in one transaction, holding the audit chain's lock**, so two
+  promotions sent at once can't both pass the sequence check.
+- **The gate runs on the laptop, before signing**, because it needs the training data and both
+  models (`ml/eval/promotion_gate.py`: +0.01 PR-AUC, score + reasons p95 at most 5 ms, at most 2%
+  flagged). Its verdict and numbers are signed into the message, so the audit row shows them and
+  an override can't be hidden. `OVERRIDE="why"` promotes past a "keep" and records why.
+- **A rollback skips the gate:** it is the way back when a model goes wrong, and the version it
+  returns to was live a moment ago. It must give a reason. Rolling back twice goes forward again.
+- **Its own database login** (`model_admin`): may read and add audit rows, nothing else, not even
+  cases.
+- **One copy** on the cluster: admins send a few requests a day.
 
 | Choice | Why |
 |---|---|
@@ -81,6 +126,13 @@ message -> signature OK? -> for this model? -> newer sequence?
 - **Swap without errors:** the new model loads completely in a background thread. Then model and
   version name are replaced together in one step. Each request takes one copy of the pair, so it
   uses one model from start to finish.
+- **`model_version` names the exact files** (week 4): the model's name plus the first 8 characters
+  of its `model.txt` SHA-256, for example `fraud-lgbm-v1-535eb73c`. It is the same whether the
+  model was pinned at startup or promoted, so one model never has two labels and two models never
+  share one. (Before, a pinned model was labelled by its folder name and a promoted one by its
+  registry version, so registry version 1 and the folder `fraud-lgbm-v1` could be different
+  models with the same label.) The hash in the label has always just been checked, against the
+  pins or the signed promotion. The registry version is in the "now serving" log line.
 - **No consumer group:** in a group, only one pod would receive each message.
 - **Redpanda keeps its data now** (a named volume), or `make down` would forget the live model.
 
@@ -95,7 +147,11 @@ message -> signature OK? -> for this model? -> newer sequence?
   deployment would have one public key in its config.
 - **Someone with write access to the topic can't forge a promotion, but could delete messages,**
   for example with an empty or junk message under the same key, which compaction then keeps. A
-  restarting pod would fall back to the pinned model. Redpanda has no access control yet (week 4).
+  restarting pod would fall back to the pinned model. Since week 5 only model-admin's Redpanda
+  user may write the topic (`docs/kafka.md`).
+- **model-admin-svc is the only way onto `model.events`** on the cluster since week 5: its
+  Redpanda user is the only one allowed to write it (`docs/kafka.md`). In compose Redpanda is
+  open, so there anything could still publish a signed promotion without an audit row.
 - **Pods can differ for a moment** during a swap, each answering with its own `model_version`.
 - Postgres runs its setup script only when its data folder is empty. If the script changes, the
   volume must be recreated.

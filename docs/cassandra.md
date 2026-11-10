@@ -55,3 +55,25 @@ looks new live. `make backfill` (`store/backfill.py`) loads days 1-109 of known 
 - **Replication 1 locally** (one node). On a 3-node cluster set `'datacenter1': 3`.
 - **No TTL yet:** `n_prev_txns` and the novelty flags look at a user's whole history, and the
   dataset is only 6 months. A real bank would expire old rows (for example after 1 year).
+
+## Logins (week 4, step 3)
+
+Until week 4, Cassandra had no login: anything that reached port 9042 could read, change or drop
+everything. Now it checks a password and a permission for every statement.
+
+| Login | Used by | May |
+|---|---|---|
+| `scoring` | scoring-svc (k8s secret `cassandra-credentials`; compose env) | read and write `fraud.txn_by_user`, nothing else |
+| `fraud_admin` | `scripts/create_schema.sh` and the laptop tools (backfill, read timing, parity) | everything (superuser) |
+| `cassandra` (built in) | nobody | can't log in: its password is known to everyone, so the first run gives it a random one and turns its login off |
+
+- **How it is switched on:** the image has no setting for it, so the container edits its config
+  (`authenticator: PasswordAuthenticator`, `authorizer: CassandraAuthorizer`) and then starts
+  as usual (`deploy/k8s/base/cassandra.yaml`, `compose.yaml`).
+- **Clients:** `store/history.py` logs in with `CASSANDRA_USER` and `CASSANDRA_PASSWORD`,
+  defaulting to `fraud_admin` for the laptop tools.
+- **The limit Cassandra can't go below:** its `MODIFY` permission covers INSERT, UPDATE, DELETE
+  and TRUNCATE together, so scoring could still empty its own table. It can't touch any other
+  table, change the schema, or read the logins.
+- **Test:** `make k8s-st4-db` (`security/tests/st4_cassandra_logins.sh`). Dev passwords, like
+  Postgres's; encrypted secrets are step 5.

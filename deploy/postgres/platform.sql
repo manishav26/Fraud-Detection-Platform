@@ -7,6 +7,10 @@ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'alerts') THEN
     CREATE ROLE alerts LOGIN PASSWORD 'alerts_dev_only';   -- dev password only
   END IF;
+  -- model-admin-svc's login (week 4, step 6): may only read and add audit rows
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'model_admin') THEN
+    CREATE ROLE model_admin LOGIN PASSWORD 'model_admin_dev_only';   -- dev password only
+  END IF;
 END $$;
 
 -- A flagged payment waiting for a person to decide. One per payment: txn_id is unique, so a
@@ -60,3 +64,19 @@ REVOKE ALL ON cases, audit_log FROM PUBLIC;
 GRANT SELECT, INSERT, UPDATE ON cases TO alerts;
 GRANT SELECT, INSERT ON audit_log TO alerts;
 GRANT USAGE ON SEQUENCE cases_case_id_seq, audit_log_id_seq TO alerts;
+
+-- What model-admin-svc's login may do: no cases at all, and the audit log only read and added to
+GRANT SELECT, INSERT ON audit_log TO model_admin;
+GRANT USAGE ON SEQUENCE audit_log_id_seq TO model_admin;
+
+-- How far the SIEM forwarder has got (week 4, step 7; docs/siem.md): the id of the last audit row
+-- the SIEM accepted. One row. alert-svc locks it while it sends a batch, so its two copies never
+-- send at the same time, and moves it only after the SIEM said yes.
+CREATE TABLE IF NOT EXISTS siem_cursor (
+  id       int PRIMARY KEY CHECK (id = 1),
+  last_id  bigint NOT NULL DEFAULT 0,
+  sent_at  timestamptz
+);
+INSERT INTO siem_cursor (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+REVOKE ALL ON siem_cursor FROM PUBLIC;
+GRANT SELECT, UPDATE ON siem_cursor TO alerts;

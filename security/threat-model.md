@@ -19,15 +19,15 @@ defined in the plan; each needs a pass number saved in docs/results/security.md.
 | 11 | Tampered model file | registry, scoring | Attacker with registry or storage access | SHA-256 recorded at registration and checked at load against a value pinned in the deploy config, outside the model folder (`deploy/scoring.env`, week 2). A live change needs a signed promotion message carrying the hashes (`registry/`, week 3) | ST9 |
 | 12 | Attacker forces retrains or slowly shifts the data | drift-job | Attacker manipulating drift signals | Retrain cooldown, weekly retrain cap, golden-set comparison before promotion | ST14 |
 | 13 | Vulnerable or malicious dependency | build | Supply-chain attacker | Pinned versions, Trivy and pip-audit in CI, gitleaks | ST10 |
-| 14 | Attacker probes the API to learn what gets approved | scoring | Fraudster probing for approval rules | Hide scores from clients, query budget per client, probe detection | E6 |
+| 14 | Attacker probes the API to learn what gets approved | scoring | Fraudster probing for approval rules | Clients see only the decision (D1); probe detection per card: an approval after 5 model-flagged payments in 24 h goes to review (D3). No query budget: E6 showed it adds false positives and no protection once D3 is on (`docs/scoring.md`) | E6; `make k8s-probe-attack` |
 
 ## Test definitions
 | ID | Test | Pass condition |
 |----|------|----------------|
 | ST1 | 1,000 requests with forged, expired, altered or alg: none tokens | 100% get 401, none reach scoring-svc |
 | ST2 | Each role calls every route | Matrix matches the Roles table, forbidden calls get 403 |
-| ST3 | Test pod outside the mesh calls scoring-svc directly | Connection refused or rejected |
-| ST4 | ingest-svc tries to open a connection to Postgres | Blocked by NetworkPolicy |
+| ST3 | A pod outside the mesh, labelled as ingest so the network rules allow it, calls scoring-svc's `POST /score` directly (`make k8s-st3`) | Refused; the same call from a real, meshed ingest pod is answered |
+| ST4 | From inside the cluster, each workload and a pod with no labels try every pod and port (`make k8s-st4`) | Exactly the paths in `docs/network.md` connect; everything else, e.g. ingest-svc to Postgres, is blocked |
 | ST5 | Schemathesis fuzzing of the OpenAPI file, 1,000+ cases | No 5xx, no crashes |
 | ST6 | Injection strings in every text field | No change in any data store, no error leak |
 | ST7 | One client sends 200 req/s against a limit of 50 | Excess gets 429; P95 for others moves under 10% compared with that client sending within its limit (allowed traffic slows a laptop on its own; see docs/results/security.md) |
