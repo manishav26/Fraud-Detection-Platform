@@ -227,7 +227,11 @@ now reads in pages. Writing missing values as "unset" instead would avoid the to
 little work on every history read); planned with the next backfill, on the VM.
 **Fixed (11 Nov):** every writer (scoring, the backfill, the feature job) now leaves a missing
 value unset (`store/history.py`, `stream/sink.py`), so no new tombstones; the VM's data is
-reloaded with `make k8s-reset-data` to drop the old ones.
+reloaded with `make k8s-reset-data` to drop the old ones. **Checked (VM, 11 Nov),** after
+rebuilding scoring and the feature job (the fix reaches a running service only with its image)
+and reloading: Cassandra's own trace of a history read says `Read 1 live rows and 0 tombstone
+cells` on both copies that answered. Before, `nodetool tablestats` showed up to 10 per read; after,
+"1.0 average, 1 maximum", which is how that statistic records zero (its smallest bucket spans 0-1).
 
 **Limit:** the payment's attributes (`card1`, `addr1`, ...) are model features and stay in the
 payment topics, readable by alert-svc and the feature job only (`docs/privacy.md`).
