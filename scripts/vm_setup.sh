@@ -24,10 +24,11 @@ fetch() {   # fetch <url> <sha256> <file>: download, check, or stop
 
 echo "1/6 system packages"
 sudo apt-get update -q
-# make runs every step (Makefile); openssl makes keys and passwords; netcat waits for tunnels.
-# Ubuntu's cloud image leaves some of these out.
+# make runs every step (Makefile); openssl makes keys and passwords; netcat waits for tunnels;
+# libgomp1 is the OpenMP runtime LightGBM loads (as in scoring-svc's image). Ubuntu's cloud image
+# leaves some of these out.
 sudo apt-get install -yq ca-certificates curl gnupg tmux rsync git jq make openssl \
-  netcat-openbsd software-properties-common
+  netcat-openbsd libgomp1 software-properties-common
 
 echo "2/6 Docker, from Docker's own repository"
 if ! command -v docker >/dev/null; then
@@ -87,6 +88,10 @@ MISSING=()
 for c in make openssl nc jq git rsync base64 sha256sum shasum curl gpg awk sed tr timeout watch \
          tmux docker k3d kubectl linkerd sops age age-keygen python3.11; do
   command -v "$c" >/dev/null || MISSING+=("$c")
+done
+# and the shared libraries our Python packages load (LightGBM fails to import without this one)
+for lib in libgomp.so.1; do
+  ldconfig -p | grep -q "$lib" || MISSING+=("$lib")
 done
 [ ${#MISSING[@]} -eq 0 ] || { echo "Still missing: ${MISSING[*]}" >&2; exit 1; }
 
