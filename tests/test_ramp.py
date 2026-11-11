@@ -7,6 +7,8 @@ import re
 import subprocess
 from itertools import pairwise
 
+import pytest
+
 from load import ramp
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -126,3 +128,32 @@ def test_nan_numbers_render_as_gaps():
 def test_zero_degraded_passes_and_a_gap_renders_as_a_gap():
     assert ramp.judge(client(), {**PROM_OK, "degraded": 0}, 100) == (ramp.PASS, [])
     assert ramp.share(math.nan) == "–" and ramp.share(None) == "–" and ramp.share(0.0) == "0.00%"
+
+
+def test_shards_interleave_so_senders_together_keep_time_order():
+    import pandas as pd
+
+    from load.replay import shard
+    df = pd.DataFrame({"row": range(7)})
+    assert list(shard(df, "0/2")["row"]) == [0, 2, 4, 6]
+    assert list(shard(df, "1/2")["row"]) == [1, 3, 5]
+    assert list(shard(df, "0/1")["row"]) == list(range(7))
+
+
+def test_two_senders_are_judged_together_on_one_clock(tmp_path):
+    # each sends 5/s for 180 s; the second started 0.4 s after the first
+    for i, started in ((0, 1000.0), (1, 1000.4)):
+        write_run(tmp_path / f"run-{i}.csv", [(s / 5, "200", 20.0 if s < 300 else 900.0)
+                                              for s in range(900)])
+        (tmp_path / f"client-{i}.txt").write_text(f"Sent ...\nStarted sending at unix {started}\n")
+    parts = ramp.sender_parts(tmp_path)
+    assert [p[1] for p in parts] == [1000.0, 1000.4]
+    c = ramp.senders_window(parts, 1060.0, 1180.0)   # the step's last 2 minutes, from the first start
+    assert c["rate"] == pytest.approx(10, rel=0.01) and c["p95_ms"] == 900
+
+
+def test_a_sender_without_a_start_time_stops_the_judge(tmp_path):
+    write_run(tmp_path / "run-0.csv", [(0, "200", 1)])
+    (tmp_path / "client-0.txt").write_text("it crashed\n")
+    with pytest.raises(SystemExit, match="no start time"):
+        ramp.sender_parts(tmp_path)

@@ -228,8 +228,9 @@ k8s-consistency:
 # Ramp test (VM; docs/results/ramp.md): steps of 25-200 payments a second until a target is missed
 #   make k8s-ramp                         make k8s-ramp RATES="25 50"   (a shorter try)
 RATES ?= 25 50 75 100 150 200
+SENDERS ?= 1
 k8s-ramp:
-	PYTHON=python RATES="$(RATES)" ./scripts/ramp_test.sh
+	PYTHON=python RATES="$(RATES)" SENDERS=$(SENDERS) ./scripts/ramp_test.sh
 
 # Scaling (VM; docs/results/scaling.md, week 5): 1, 2 and 4 scoring copies, the same work each
 k8s-scaling:

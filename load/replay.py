@@ -89,6 +89,14 @@ def load_rows(path, limit=None, offset=0):
     return add_proxy_id(df).reset_index(drop=True)
 
 
+def shard(df, spec):
+    """'i/N' -> rows i, i+N, i+2N, ... of df (0 <= i < N)."""
+    i, n = (int(x) for x in spec.split("/"))
+    if not 0 <= i < n:
+        raise SystemExit(f"--shard {spec}: needs 0 <= i < N")
+    return df.iloc[i::n].reset_index(drop=True)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--data", default=ROOT / "data" / "processed" / "stream.parquet")
@@ -99,9 +107,13 @@ def main():
     p.add_argument("--concurrency", type=int, default=32)
     p.add_argument("--url", default="http://localhost:8000")
     p.add_argument("--out", default=ROOT / "data" / "replay" / "results.csv")
+    # i/N: only every N-th row starting at row i, so N processes (each at --rps / N) share one block
+    # of rows in time order, together sending the whole stream at the full rate (scripts/ramp_test.sh
+    # SENDERS: one Python process tops out near 150/s)
+    p.add_argument("--shard", default="0/1", help="i/N: send rows i, i+N, i+2N, ... of the block")
     args = p.parse_args()
 
-    df = load_rows(args.data, args.limit, args.offset)
+    df = shard(load_rows(args.data, args.limit, args.offset), args.shard)
     days = (df["TransactionDT"].iloc[-1] - df["TransactionDT"].iloc[0]) / 86400
     pace = f"{args.rps:g} per second" if args.rps else f"speed {args.speed:g}"
     print(f"Replaying {len(df):,} payments ({days:.1f} days of data, from row {args.offset:,})"

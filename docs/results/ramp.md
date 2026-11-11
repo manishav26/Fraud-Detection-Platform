@@ -58,9 +58,29 @@ minutes if every step runs). `scripts/ramp_test.sh plan` prints each step's rows
 Prometheus has every metric a step needs. Output: `data/ramp/<rate>/` and
 `data/ramp/summary.md` (not in git).
 
+## First run (11 Nov, one sender, before the tombstone fix)
+
+| Asked /s | Reached /s | p50 ms | p95 ms | p99 ms | ingest p95 ms | 5xx | degraded | scoring copies | Result |
+|---|---|---|---|---|---|---|---|---|---|
+| 25 | 25.0 | 15 | 20 | 26 | 24 | 0.000% | 0.00% | 2 | pass |
+| 50 | 50.0 | 13 | 21 | 28 | 23 | 0.000% | 0.00% | 2 | pass |
+| 75 | 75.0 | 12 | 22 | 31 | 22 | 0.000% | 0.00% | 2 | pass |
+| 100 | 100.0 | 13 | 27 | 42 | 24 | 0.000% | 0.00% | 2 | pass |
+| 150 | 150.0 | 16 | 40 | 63 | 35 | 0.000% | 0.00% | 2 | pass |
+| 200 | 148.6 | 926 | 4,154 | 6,353 | 67 | 0.000% | 0.00% | 2 | sender-limited |
+
+Every target held up to 150/s. At 200/s the sender reached only 148.6/s, and its p95 of 4.2 s
+was not the platform's: **Kong's own p95 for the same window was 91 ms** (ingest 67 ms). The time
+was spent before requests reached Kong, in the one Python sending process (or k3d's load
+balancer). So the run was repeated with **two senders** (`make k8s-ramp SENDERS=2`: each process
+takes every other row at half the rate, `load.replay --shard`, so together they still send the
+stream in time order), after the data was reloaded without tombstones. Also seen at 200/s: Kong's
+own time rose from 1 to 23 ms, so Kong (one copy) is close to its limit too. The HPA kept 2 scoring
+copies throughout: their average CPU never reached the 60% target.
+
 ## Results
 
-*(to be filled in from the VM run)*
+*(to be filled in from the rerun: two senders, data without tombstones)*
 
 | Asked /s | Reached /s | p50 ms | p95 ms | p99 ms | ingest p95 ms | 5xx | degraded | scoring copies | Result |
 |---|---|---|---|---|---|---|---|---|---|

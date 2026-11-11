@@ -15,6 +15,7 @@ import argparse
 import csv
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -37,14 +38,38 @@ PASS, MISSED, SENDER_LIMITED = 0, 1, 2
 def client_window(path, start_s, end_s):
     """The replay's own view of the payments sent between start_s and end_s (seconds from the
     replay's start): how many, the rate reached, latency of the answered ones, and errors."""
-    with open(path, newline="") as f:
-        rows = [r for r in csv.DictReader(f) if start_s <= float(r["sent_s"]) < end_s]
+    return senders_window([(path, 0.0)], start_s, end_s)
+
+
+def senders_window(parts, start, end):
+    """client_window over several senders at once: parts = [(run CSV, the unix time that sender
+    started)], and start/end in unix time. Each CSV's sent_s counts from its own sender's start."""
+    rows = []
+    for path, started in parts:
+        with open(path, newline="") as f:
+            rows += [r for r in csv.DictReader(f) if start <= started + float(r["sent_s"]) < end]
+    start_s, end_s = start, end
     ok = [float(r["latency_ms"]) for r in rows if r["status"] == "200"]
     errors = sum(1 for r in rows if r["status"] == "error" or r["status"].startswith("5"))
     p50, p95, p99 = np.percentile(ok, [50, 95, 99]) if ok else (math.nan,) * 3
     return {"sent": len(rows), "rate": len(rows) / (end_s - start_s), "answered": len(ok),
             "errors": errors, "errors_share": errors / len(rows) if rows else math.nan,
             "p50_ms": float(p50), "p95_ms": float(p95), "p99_ms": float(p99)}
+
+
+def sender_parts(folder):
+    """[(run CSV, its sender's start)] for every sender of a step: run.csv with client.txt, or
+    run-<i>.csv with client-<i>.txt (scripts/ramp_test.sh SENDERS)."""
+    parts = []
+    for run in sorted(Path(folder).glob("run*.csv")):
+        client = run.with_name(run.name.replace("run", "client", 1).replace(".csv", ".txt"))
+        found = re.search(r"Started sending at unix ([\d.]+)", client.read_text())
+        if not found:
+            raise SystemExit(f"no start time in {client}")
+        parts.append((run, float(found.group(1))))
+    if not parts:
+        raise SystemExit(f"no run*.csv in {folder}")
+    return parts
 
 
 def nan(v):
@@ -159,7 +184,9 @@ def main():
         folder = Path(args.folder)
         step = json.loads((folder / "step.json").read_text())
         prom = json.loads((folder / "prometheus.json").read_text())
-        client = client_window(folder / "run.csv", args.seconds - args.measure, args.seconds)
+        parts = sender_parts(folder)
+        first = min(started for _, started in parts)   # the step starts with its first sender
+        client = senders_window(parts, first + args.seconds - args.measure, first + args.seconds)
         verdict, missed = judge(client, prom, args.rps)
         step.update(rps=args.rps, client=client, verdict=verdict, missed=missed,
                     copies=copies(args.copies, step["measure_start"], step["end"]) if args.copies else None)

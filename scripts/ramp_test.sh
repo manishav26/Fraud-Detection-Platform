@@ -5,6 +5,7 @@
 #
 #   scripts/ramp_test.sh                 steps of 25, 50, 75, 100, 150, 200 payments a second
 #   scripts/ramp_test.sh plan            just print each step's rows
+#   SENDERS=2 scripts/ramp_test.sh       two sending processes (make k8s-ramp SENDERS=2)
 #
 # Each step sends real payments through Kong for MINUTES (default 3) and is measured over its last
 # MEASURE seconds (default 120), so the first minute absorbs the change of rate and any scale-up.
@@ -19,7 +20,11 @@ PY=${PYTHON:-python}
 RATES=${RATES:-25 50 75 100 150 200}
 MINUTES=${MINUTES:-3}
 MEASURE=${MEASURE:-120}
-CONCURRENCY=${CONCURRENCY:-256}   # payments in flight: slow answers must not hold the sender back
+CONCURRENCY=${CONCURRENCY:-256}   # payments in flight, per sender: slow answers must not hold it back
+# Sending processes per step, each with every SENDERS-th row at rate / SENDERS (load.replay
+# --shard): together the stream in time order at the full rate. One Python sender tops out near
+# 150/s (the first VM ramp, 11 Nov: asked 200, reached 148.6 while Kong's p95 stayed at 91 ms)
+SENDERS=${SENDERS:-1}
 SECONDS_PER_STEP=$(( MINUTES * 60 ))
 # This test's rows of stream.parquet: the VM's check replay used 0-1,999; scaling uses
 # 110,000-167,239 and the consistency test 167,240 onward
@@ -40,6 +45,7 @@ offsets() {   # one line per step: <rate> <first row>; refuses steps that need r
 }
 
 [ "$MEASURE" -lt "$SECONDS_PER_STEP" ] || { echo "MEASURE must be shorter than the step" >&2; exit 1; }
+[[ "$SENDERS" =~ ^[1-9][0-9]*$ ]] || { echo "SENDERS must be 1 or more" >&2; exit 1; }
 PLAN=$(offsets)   # an assignment, so a refusal stops here
 if [ "${1:-}" = plan ]; then
   echo "$PLAN" | while read -r rate row; do
@@ -73,12 +79,21 @@ result=0
 while read -r rate row; do
   dir=$OUT/$rate
   mkdir -p "$dir"
-  echo "== $rate/s for $MINUTES min, rows $row +$(( rate * SECONDS_PER_STEP ))"
-  "$PY" -m load.replay --rps "$rate" --offset "$row" --limit "$(( rate * SECONDS_PER_STEP ))" \
-    --concurrency "$CONCURRENCY" --url "$URL" --out "$dir/run.csv" < /dev/null > "$dir/client.txt" 2>&1 || {
-    echo "the replay failed: $dir/client.txt" >&2; result=1; break; }
-  started=$(sed -n 's/^Started sending at unix //p' "$dir/client.txt")
-  [ -n "$started" ] || { echo "no start time in $dir/client.txt" >&2; result=1; break; }
+  echo "== $rate/s for $MINUTES min, rows $row +$(( rate * SECONDS_PER_STEP )), $SENDERS sender(s)"
+  share=$("$PY" -c "print($rate / $SENDERS)")
+  pids=()
+  for i in $(seq 0 $(( SENDERS - 1 ))); do
+    "$PY" -m load.replay --rps "$share" --offset "$row" --limit "$(( rate * SECONDS_PER_STEP ))" \
+      --shard "$i/$SENDERS" --concurrency "$CONCURRENCY" --url "$URL" --out "$dir/run-$i.csv" \
+      < /dev/null > "$dir/client-$i.txt" 2>&1 &
+    pids+=($!)
+  done
+  failed=0
+  for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
+  [ "$failed" = 0 ] || { echo "a sender failed: $dir/client-*.txt" >&2; result=1; break; }
+  # The step starts with its first sender
+  started=$(sed -n 's/^Started sending at unix //p' "$dir"/client-*.txt | sort -n | head -1)
+  [ -n "$started" ] || { echo "no start time in $dir/client-*.txt" >&2; result=1; break; }
   # The measured window: the step's last MEASURE seconds, as scheduled from its first send
   end=$("$PY" -c "print(int(round($started + $SECONDS_PER_STEP)))")
   measure_start=$(( end - MEASURE ))
