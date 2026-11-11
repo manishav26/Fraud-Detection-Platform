@@ -40,7 +40,11 @@ def write(topic):
 
 
 def read(topic):
-    return ["topic", "consume", topic, "-n", "1", "-o", "start"], ""
+    # From the start up to the topic's current end, at most 1 message: an allowed read returns at
+    # once even when the topic is empty. With `-o start` it waited for a first message, so on a
+    # fresh cluster (model.events empty until a promotion; VM, 11 Nov 2026) an allowed read timed
+    # out (exit 124) and looked unclear instead of worked.
+    return ["topic", "consume", topic, "-n", "1", "-o", ":end"], ""
 
 
 # (who, what, rpk call, allowed). who=None: no login; "wrong": ingest with a wrong password.
