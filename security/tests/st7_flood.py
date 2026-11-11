@@ -65,10 +65,15 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--url", default="http://localhost:8000")
     p.add_argument("--seconds", type=float, default=20)
+    # On the laptop two identical B runs differed by up to 2.4 times (docs/results/security.md), so
+    # one pair can't judge a 10% rule: the VM rerun uses longer runs and more pairs
+    p.add_argument("--repeats", type=int, default=2, help="B and C pairs (alternating)")
     args = p.parse_args()
 
-    plan = [("A", 0, 71), ("B", UNDER_LIMIT, 72), ("C", FLOOD, 73), ("B", UNDER_LIMIT, 74),
-            ("C", FLOOD, 75)]   # B and C alternate, so a slow patch on the laptop hits both
+    # B and C alternate, so a slow patch hits both
+    plan = [("A", 0, 71)]
+    for i in range(args.repeats):
+        plan += [("B", UNDER_LIMIT, 72 + 2 * i), ("C", FLOOD, 73 + 2 * i)]
     results = []
     print("| Run | merchant-1 sends | merchant-1 status codes | merchant-1 accepted/s |"
           " merchant-2 status codes | merchant-2 p95 ms |")
@@ -83,8 +88,12 @@ def main():
     c = np.mean([p95(s) for n, s, _, _ in results if n == "C"])
     floods = [(codes, acc) for n, _, codes, acc in results if n == "C"]
     rise = (c - b) / b * 100
+    bs = [p95(s) for n, s, _, _ in results if n == "B"]
     print(f"\nmerchant-2 p95: within limit (B) {b:.1f} ms, during flood (C) {c:.1f} ms:"
           f" {rise:+.1f}% (pass: under 10%)")
+    # How much identical runs differ: a difference between B and C smaller than this is noise
+    print(f"B runs ranged {min(bs):.1f}-{max(bs):.1f} ms ({(max(bs) - min(bs)) / b * 100:.0f}% of B's"
+          f" mean) over {len(bs)} runs")
     for codes, acc in floods:
         print(f"flood: merchant-1 accepted {acc:.0f}/s against a limit of {LIMIT}/s,"
               f" {codes.get(429, 0)} got 429")

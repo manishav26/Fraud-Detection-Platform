@@ -157,3 +157,19 @@ With these, the same disruption (scoring, ingest and alert pods evicted from one
 - **The Grafana copies panel** showed scoring dropping to 1 for a moment under 80/s, while
   Kubernetes had 3 ready the whole time: a busy pod answered Prometheus's read late. The panel
   now counts a pod that answered any read in the last 30 s.
+
+## Week 5: 1, 2 and 4 copies (on the VM)
+
+The plan: run 1, 2 and 4 scoring copies at the same load and compute the scaling efficiency
+E_N = T_N / (N x T_1) (Chapter 1).
+
+**Design** (`make k8s-scaling`, `scripts/scaling_test.sh`, `load/scaling.py`): scoring held at
+exactly N copies (HPA min = max = N, put back afterwards); each run sends the same 18,000 real
+payments (rows 110,000-163,999, a new block per run) as fast as 64 in flight allow, so the
+platform sets the pace (a closed loop). T_N is the payments answered per second between the 10th
+and 90th percentile of answer times (no warm-up, no drain). Each run also records scoring's and
+Cassandra's p95 and the busiest pods: if T_4 stops growing while the scoring pods have CPU to
+spare, the limit is elsewhere (ingest's 2 copies, Kong, Cassandra or the sender), and the table
+shows which.
+
+*(results to be filled in from the VM run)*

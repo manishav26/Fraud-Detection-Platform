@@ -102,7 +102,9 @@ async def send_one(client, token, req):
 
 # sent_s: when the payment was sent, in seconds from the run's start (so a part of a run can be
 # measured on its own, e.g. a ramp step's last minutes: scripts/ramp_test.sh)
-CSV_HEADER = ["txn_id", "user_id", "status", "decision", "score", "latency_ms", "extra", "sent_s"]
+# degraded: scored without history (the failure tests count these as well as errors)
+CSV_HEADER = ["txn_id", "user_id", "status", "decision", "score", "latency_ms", "extra", "sent_s",
+              "degraded"]
 
 
 def write_csv(rows, path):
@@ -138,7 +140,8 @@ async def run(schedule, url, concurrency=32, keep_rows=False, transport=None, cr
             stats.probes += bool(body.get("probe"))
         if keep_rows:
             stats.rows.append([req["txn_id"], req["user_id"], status, body.get("decision"),
-                               body.get("score"), round(ms, 2), extra, round(sent_s, 3)])
+                               body.get("score"), round(ms, 2), extra, round(sent_s, 3),
+                               bool(body.get("degraded"))])
 
     limits = httpx.Limits(max_connections=concurrency)
     async with httpx.AsyncClient(base_url=url, timeout=30, limits=limits,
