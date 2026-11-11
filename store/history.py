@@ -80,7 +80,9 @@ def auth_provider():
 
 
 class HistoryStore:
-    def __init__(self, hosts=None, keyspace="fraud", consistency=None):
+    def __init__(self, hosts=None, keyspace="fraud", consistency=None, address_translator=None):
+        """address_translator: for a tool outside the cluster that reaches each node through its
+        own tunnel (load/consistency_check.py); in-cluster clients leave it out."""
         hosts = hosts or os.getenv("CASSANDRA_HOSTS", "localhost").split(",")
         level = consistency or os.getenv("CASSANDRA_CONSISTENCY", "LOCAL_QUORUM")
         profile = ExecutionProfile(
@@ -90,8 +92,9 @@ class HistoryStore:
             consistency_level=ConsistencyLevel.name_to_value[level],
             row_factory=dict_factory,
         )
+        extra = {} if address_translator is None else {"address_translator": address_translator}
         self.cluster = Cluster(hosts, execution_profiles={EXEC_PROFILE_DEFAULT: profile},
-                               auth_provider=auth_provider())
+                               auth_provider=auth_provider(), **extra)
         self.session = self.cluster.connect(keyspace)
         # prepared once: Cassandra parses the query a single time, later calls only send values
         self.insert = self.session.prepare(INSERT)

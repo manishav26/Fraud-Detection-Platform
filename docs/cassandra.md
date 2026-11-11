@@ -51,7 +51,7 @@ looks new live. `make backfill` (`store/backfill.py`) loads days 1-109 of known 
 - **Consistency `LOCAL_QUORUM` for reads and writes:** a majority of copies must answer. With 3
   copies that is 2 for writes + 2 for reads > 3, so every read sees the latest write, and one
   node can be down. `ONE` is faster but a read may miss a just-written payment. Change it with
-  `CASSANDRA_CONSISTENCY=ONE`.
+  `CASSANDRA_CONSISTENCY=ONE`. The two are compared on the VM: `docs/results/consistency.md`.
 - **Replication follows the cluster:** 1 copy on one node (compose, the laptop), 3 on the VM's 3
   nodes ("Three nodes" below). `scripts/create_schema.sh` sets it on every run (`CASSANDRA_RF`).
 - **No TTL yet:** `n_prev_txns` and the novelty flags look at a user's whole history, and the

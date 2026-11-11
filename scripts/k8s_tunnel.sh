@@ -23,32 +23,48 @@ while [ "$1" != "--" ]; do
 done
 shift
 
+# A tunnel is <target>=<local port>:<remote port>, or <target>=<local address>:<local port>:<remote
+# port> to listen on another loopback address (127.0.0.2 ...; Linux only): the consistency test
+# reaches each Cassandra pod on port 9042 of its own address (scripts/consistency_test.sh).
+local_addr() {
+  local ports="${1#*=}"
+  if [ "$(echo "$ports" | tr -cd : | wc -c | tr -d ' ')" = 2 ]; then echo "${ports%%:*}"; else echo localhost; fi
+}
+
 local_port() {
   local ports="${1#*=}"
+  [ "$(local_addr "$1")" = localhost ] || ports="${ports#*:}"
   echo "${ports%%:*}"
 }
 
+remote_ports() {   # what kubectl port-forward takes: <local port>:<remote port>
+  local ports="${1#*=}"
+  [ "$(local_addr "$1")" = localhost ] || ports="${ports#*:}"
+  echo "$ports"
+}
+
 for tunnel in "${TUNNELS[@]}"; do
-  port=$(local_port "$tunnel")
-  if nc -z localhost "$port" 2>/dev/null; then
+  port=$(local_port "$tunnel"); addr=$(local_addr "$tunnel")
+  if nc -z "$addr" "$port" 2>/dev/null; then
     # Something else (usually compose) would answer, and we would change the wrong system
-    echo "Port $port is already in use, probably by compose. Run: make down" >&2
+    echo "$addr:$port is already in use, probably by compose. Run: make down" >&2
     exit 1
   fi
 done
 
 for tunnel in "${TUNNELS[@]}"; do
-  kubectl -n "$NS" port-forward "${tunnel%%=*}" "${tunnel#*=}" >/dev/null &
+  kubectl -n "$NS" port-forward --address "$(local_addr "$tunnel")" "${tunnel%%=*}" \
+    "$(remote_ports "$tunnel")" >/dev/null &
   PIDS+=($!)
 done
 
 for tunnel in "${TUNNELS[@]}"; do
-  port=$(local_port "$tunnel")
+  port=$(local_port "$tunnel"); addr=$(local_addr "$tunnel")
   for _ in $(seq 40); do
-    nc -z localhost "$port" 2>/dev/null && break
+    nc -z "$addr" "$port" 2>/dev/null && break
     sleep 0.25
   done
-  nc -z localhost "$port" 2>/dev/null || { echo "Tunnel to port $port did not open" >&2; exit 1; }
+  nc -z "$addr" "$port" 2>/dev/null || { echo "Tunnel to $addr:$port did not open" >&2; exit 1; }
 done
 
 "$@"
