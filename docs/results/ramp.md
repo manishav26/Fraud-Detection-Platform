@@ -78,14 +78,44 @@ stream in time order), after the data was reloaded without tombstones. Also seen
 own time rose from 1 to 23 ms, so Kong (one copy) is close to its limit too. The HPA kept 2 scoring
 copies throughout: their average CPU never reached the 60% target.
 
-## Results
-
-*(to be filled in from the rerun: two senders, data without tombstones)*
+## Results (11 Nov, two senders)
 
 | Asked /s | Reached /s | p50 ms | p95 ms | p99 ms | ingest p95 ms | 5xx | degraded | scoring copies | Result |
 |---|---|---|---|---|---|---|---|---|---|
+| 25 | 25.0 | 16 | 23 | 29 | 24 | 0.000% | 0.00% | 2 | pass |
+| 50 | 50.0 | 16 | 25 | 31 | 24 | 0.000% | 0.00% | 2 | pass |
+| 75 | 75.0 | 15 | 26 | 35 | 24 | 0.000% | 0.00% | 2 | pass |
+| 100 | 100.0 | 16 | 34 | 50 | 25 | 0.000% | 0.00% | 2 | pass |
+| 150 | 150.0 | 20 | 47 | 72 | 42 | 0.000% | 0.00% | 2 | pass |
+| 200 | 200.0 | 33 | 119 | 211 | 95 | 0.000% | 0.00% | 3 | pass |
 
 Where the time goes (p95 per hop, ms):
 
 | Asked /s | End to end | Kong total | Kong itself | Kong -> ingest | ingest server | publish txn.raw | wait for scoring | scoring /score | Cassandra read | model | reasons | Cassandra write | features fresh (p95 s) | feature job / sent |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 25 | 23 | 24 | 1 | 24 | 24 | 5 | 23 | 10 | 5 | 5 | 19 | 5 | 2.7 | 1.00 |
+| 50 | 25 | 24 | 1 | 24 | 24 | 5 | 23 | 13 | 5 | 5 | 22 | 5 | 1.9 | 1.00 |
+| 75 | 26 | 24 | 2 | 24 | 24 | 5 | 22 | 12 | 5 | 5 | 21 | 5 | 1.9 | 1.00 |
+| 100 | 34 | 37 | 2 | 33 | 25 | 5 | 23 | 18 | 7 | 5 | 22 | 5 | 1.9 | 1.00 |
+| 150 | 47 | 47 | 2 | 46 | 42 | 5 | 31 | 23 | 10 | 5 | 24 | 8 | 1.9 | 1.00 |
+| 200 | 119 | 134 | 2 | 127 | 95 | 23 | 68 | 43 | 23 | 5 | 31 | 18 | 2.9 | 1.00 |
+
+**Every target held up to 200/s**, the highest step this test's rows allow: the platform sustains
+**at least 200 payments a second** (about 6.7 times the 30/s the targets were set for), p95 119 ms
+against 250 ms.
+
+- **The next limit is ingest**, at 95 ms against its 100 ms target at 200/s: it waits for scoring
+  (68 ms) and for Redpanda to confirm the payment is saved (23 ms, up from 5). Kong itself stays
+  at 2 ms, so the gateway is not the limit; Kong's total is ingest's time plus the hop to it.
+- **Scoring scaled itself:** the HPA added a third copy during the 200/s step.
+- **The model is flat at 5 ms** at every rate; what grows is waiting (Cassandra read 5 -> 23 ms,
+  write 5 -> 18 ms, reasons 19 -> 31 ms as the scoring pods' CPU fills).
+- **The feature job kept up at every rate** (it handled 1.00 of what was sent), with features
+  about 2-3 s fresh at p95: Spark's micro-batches, not falling behind.
+- **The one-sender run** (above) put its 4 s in the sender: with two, Kong's own time stayed at
+  2 ms instead of 23.
+
+**Caveat:** this run's scoring image still wrote missing values as nulls (the fix reached the
+VM's code but not the running image), so its data had about 1 tombstone per history read
+(`nodetool tablestats`: average 1.1, max 10). Cassandra's read p95 stayed at 5-23 ms, so this
+can't have changed the result much; the images were then rebuilt with the fix.
