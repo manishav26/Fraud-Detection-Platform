@@ -167,8 +167,14 @@ come back: the proxy balances requests, not connections, and drops a pod as soon
 ready list; ingest's 15 s pause covers the requests already in flight. Ingest to scoring already
 worked this way.
 
-**Checked:** *(after applying: the reset and replay again, expecting 0 of 2,000 502s; the drain
-rerun, the test that found cause 2, expecting 0 errors; ST2 and ST4)*
+**Checked (VM, 11 Nov), all after `make k8s-apply RESTART=kong`:**
+
+| Check | Before | After |
+|---|---|---|
+| Reset (both ingest pods replaced), then 2,000 payments | 2 of 2,000 got 502, twice | **0 of 2,000** (`{200: 2000}`, p95 30 ms) |
+| `rollout restart` of ingest **during** a 3,600-payment replay: both pods replaced one by one, each leaving mid-traffic | (cause 2 gave 16 errors when one ingest pod left) | **0 of 3,600** (no retries, p95 26 ms) |
+| Drain rerun (that node held only a scoring pod) | | 0 of 3,600 |
+| ST4 network paths, ST2 roles | | both pass, unchanged |
 
 ## Other observations
 
