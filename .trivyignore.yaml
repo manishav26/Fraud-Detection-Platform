@@ -11,6 +11,15 @@ misconfigurations:
       - deploy/k8s/base/grafana.yaml
       - deploy/k8s/base/prometheus.yaml
       - deploy/k8s/base/mlflow.yaml
+      # The same workloads in the VM overlay, as kustomize builds it (scripts/scan.sh config)
+      - merged/vm/StatefulSet-cassandra.yaml
+      - merged/vm/StatefulSet-postgres.yaml
+      - merged/vm/StatefulSet-redpanda.yaml
+      - merged/vm/StatefulSet-objectstore.yaml
+      - merged/vm/Deployment-kong.yaml
+      - merged/vm/Deployment-grafana.yaml
+      - merged/vm/Deployment-prometheus.yaml
+      - merged/vm/Deployment-mlflow.yaml
     statement: >-
       Third-party images that write their own config and runtime files at start (Cassandra even
       edits its config to turn logins on; Kong and Grafana write under their install folders;
@@ -19,6 +28,7 @@ misconfigurations:
   - id: KSV-0047   # privilege escalation from node proxy
     paths:
       - deploy/k8s/base/prometheus.yaml
+      - merged/vm/ClusterRole-fraud-prometheus.yaml   # the same role, in the VM overlay
     statement: >-
       Prometheus reads each node's CPU and memory numbers (cAdvisor) through the API's node proxy:
       a read-only GET on nodes/proxy, the standard way to scrape cAdvisor.
