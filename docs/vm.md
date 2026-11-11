@@ -105,7 +105,9 @@ cd ~/fraud && source .venv/bin/activate
 ```bash
 make cluster AGENTS=3 && OVERLAY=vm make k8s-up && make k8s-backfill
 ```
-`OVERLAY=vm` gives Cassandra 3 nodes, one per k3d agent (`docs/cassandra.md`, "Three nodes"); they
+After this first deploy, `make k8s-up` and `make k8s-apply` take the setup from the running cluster
+(its Cassandra says which it is), so `OVERLAY=vm` isn't needed again, and asking for the other
+setup is refused. `OVERLAY=vm` gives Cassandra 3 nodes, one per k3d agent (`docs/cassandra.md`, "Three nodes"); they
 join one after another, so `k8s-up` takes a few minutes longer. Check all three are up (`UN`) and
 both keyspaces have 3 copies:
 ```bash

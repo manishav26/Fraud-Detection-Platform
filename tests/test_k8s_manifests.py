@@ -444,3 +444,25 @@ def test_copies_follow_the_overlay_and_cover_the_logins():
     assert "ALTER KEYSPACE fraud WITH replication" in schema
     assert "ALTER KEYSPACE system_auth WITH replication" in schema
     assert "repair -full system_auth" in schema
+
+
+def pick_overlay(asked, running):
+    import re
+    import subprocess
+    up = (BASE.parents[2] / "scripts" / "k8s_up.sh").read_text()
+    func = re.search(r"^pick_overlay\(\) \{.*?^\}", up, re.DOTALL | re.MULTILINE).group(0)
+    r = subprocess.run(["bash", "-c", f'{func}\npick_overlay "$1" "$2"', "_", asked, running],
+                       capture_output=True, text=True, check=False)
+    return r.returncode, r.stdout.strip()
+
+
+def test_the_setup_comes_from_the_running_cluster_not_from_memory():
+    """A plain `make k8s-apply` on the VM once tried to turn its 3-node Cassandra into 1."""
+    assert pick_overlay("", "cassandra-peers") == (0, "vm")      # the VM, OVERLAY forgotten
+    assert pick_overlay("vm", "cassandra-peers") == (0, "vm")
+    assert pick_overlay("base", "cassandra-peers")[0] != 0       # would shrink it: refused
+    assert pick_overlay("vm", "cassandra")[0] != 0               # would grow it in place: refused
+    assert pick_overlay("", "cassandra") == (0, "base")          # the laptop
+    assert pick_overlay("", "") == (0, "base")                   # no cluster yet
+    assert pick_overlay("vm", "") == (0, "vm")                   # a new VM cluster
+    assert pick_overlay("", "something-else")[0] != 0
