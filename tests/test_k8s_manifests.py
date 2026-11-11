@@ -4,6 +4,8 @@ Read straight from deploy/k8s/base, so a later edit can't quietly drop a probe, 
 rollout rule.
 """
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -366,6 +368,26 @@ def test_the_vm_overlay_is_the_base_plus_three_cassandra_nodes():
     kustomization = VM_DOCS["kustomization.yaml"][0]
     assert kustomization["resources"] == ["../base", "cassandra-peers.yaml"]
     assert [p["path"] for p in kustomization["patches"]] == ["cassandra-3-nodes.yaml"]
+
+
+def test_every_overlay_puts_its_own_resources_in_the_fraud_namespace():
+    """A base's `namespace:` doesn't reach the resources an overlay adds: each overlay sets its own
+    (on the VM, cassandra-peers landed in `default` and the second node never found the first)."""
+    for kustomization in BASE.parent.glob("*/kustomization.yaml"):
+        assert yaml.safe_load(kustomization.read_text()).get("namespace") == "fraud", kustomization
+
+
+CLUSTER_WIDE = {"Namespace", "ClusterRole", "ClusterRoleBinding", "CustomResourceDefinition"}
+
+
+@pytest.mark.skipif(shutil.which("kubectl") is None, reason="needs kubectl to build the overlays")
+@pytest.mark.parametrize("overlay", ["base", "vm"])
+def test_everything_kustomize_builds_lands_in_fraud(overlay):
+    built = subprocess.run(["kubectl", "kustomize", str(BASE.parent / overlay)],
+                           capture_output=True, text=True, check=True).stdout
+    misplaced = [f"{d['kind']}/{d['metadata']['name']}" for d in yaml.safe_load_all(built)
+                 if d and d["kind"] not in CLUSTER_WIDE and d["metadata"].get("namespace") != "fraud"]
+    assert misplaced == []
 
 
 def test_three_nodes_one_per_machine_started_one_at_a_time():
