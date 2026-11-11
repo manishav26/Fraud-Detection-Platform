@@ -175,4 +175,34 @@ Cassandra's p95 and the busiest pods: if T_4 stops growing while the scoring pod
 spare, the limit is elsewhere (ingest's 2 copies, Kong, Cassandra or the sender), and the table
 shows which.
 
-*(results to be filled in from the VM run)*
+### First run: 8-core VM, ingest at its usual 2 copies (11 Nov)
+
+| Scoring copies | Throughput T_N (/s) | E_N | p50 ms | p95 ms | 5xx | scoring /score p95 ms | Cassandra read p95 ms | busiest pods (cores) |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 252.8 | 1.00 | 886 | 1,865 | 0 of 18,000 | 797 | 84 | feature-job 1.32, ingest 0.89 + 0.88, scoring 0.80 |
+| 2 | 244.6 | 0.48 | 829 | 2,346 | 0 of 18,000 | 262 | 90 | feature-job 1.21, ingest 0.88 + 0.88, cassandra-0 0.67 |
+| 4 | 231.2 | 0.23 | 610 | 2,439 | 0 of 18,000 | 192 | 79 | feature-job 1.16, ingest 0.83 + 0.82, cassandra-1 0.65 |
+
+(p50 and p95 here are of a closed loop with 256 payments in flight: they show queueing, not the
+latency at a given rate, which is the ramp's job.)
+
+**Throughput stayed at about 250/s whatever the number of scoring copies**, so E_N here measures
+the bottleneck, not scoring. Scoring itself got faster with each copy (its p95 797 -> 262 -> 192
+ms): with 1 copy it was a queue, with 2 or 4 it wasn't, and the platform still answered 250/s.
+Two things were full instead:
+- **ingest**: its 2 fixed copies at about 0.88 cores each, near one Python process's ceiling
+  (it doesn't autoscale; at 200/s in the ramp it was the hop closest to its target);
+- **the VM**: the k3d nodes' CPU peaks add up to 6.6-6.8 of its 8 cores, before the 4 sending
+  processes, which run on the VM outside the cluster and aren't counted there.
+
+So on 8 cores the platform tops out near 250 payments a second, limited by CPU (ingest and the
+feature job most), not by scoring.
+
+### Rerun: 16-core VM, ingest held at 4 copies
+
+To measure scoring's own scaling, the rerun removes both limits: the VM is resized to
+m7i.4xlarge (16 vCPU; `docs/vm.md`, "Resizing"), ingest is held at 4 copies for the whole test
+(`INGEST`, put back afterwards), and the whole VM's CPU is logged every 2 s from `/proc/stat`
+(the cluster and the senders together), shown per run as mean / peak busy cores.
+
+*(results to be filled in from the rerun)*

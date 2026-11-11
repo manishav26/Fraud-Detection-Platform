@@ -118,4 +118,4 @@ against 250 ms.
 **Caveat:** this run's scoring image still wrote missing values as nulls (the fix reached the
 VM's code but not the running image), so its data had about 1 tombstone per history read
 (`nodetool tablestats`: average 1.1, max 10). Cassandra's read p95 stayed at 5-23 ms, so this
-can't have changed the result much; the images were then rebuilt with the fix.
+can't have changed the result much. Scoring and the feature job are rebuilt with the fix before the remaining tests.

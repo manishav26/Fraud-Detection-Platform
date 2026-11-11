@@ -151,6 +151,17 @@ That kubeconfig is the cluster's admin login: keep it at mode 600 and delete it 
   `HostName` in `~/.ssh/config`.
 - After a start: `ssh fraud-vm`, `kubectl get nodes` (all Ready), `kubectl -n fraud get pods`.
 
+## 9b. Resizing (the scaling rerun, 11 Nov)
+
+The scaling test filled the 8 cores (`docs/results/scaling.md`), so its rerun uses m7i.4xlarge
+(16 vCPU, 64 GiB; about twice the hourly price: check the pricing page). The disk and the cluster
+stay; only the machine changes. After the rerun, resize back to m7i.2xlarge the same way.
+1. Stop the VM: EC2 -> Instances -> `fraud-vm` -> Instance state -> **Stop**; wait for **Stopped**.
+2. Actions -> Instance settings -> **Change instance type** -> `m7i.4xlarge` -> Apply.
+3. Instance state -> **Start**; copy the new public IPv4 into `HostName` in `~/.ssh/config`.
+4. `ssh fraud-vm`, then check everything came back: `kubectl get nodes` (4 Ready),
+   `kubectl -n fraud get pods` (all Running), and `nodetool status` (3 `UN`).
+
 ## 10. Teardown (after the demo and the last measurement)
 
 1. EC2: terminate `fraud-vm` (its disk is deleted with it); delete the security group and the key

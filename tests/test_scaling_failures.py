@@ -151,3 +151,46 @@ def test_st7_alternates_b_and_c_for_every_repeat():
     text = (ROOT / "security/tests/st7_flood.py").read_text()
     assert '"--repeats"' in text and 'plan += [("B", UNDER_LIMIT' in text
     assert "B runs ranged" in text   # identical runs' spread, to tell a real difference from noise
+
+
+# The VM's own CPU (the cluster and the senders together)
+
+def test_cpu_times_count_idle_and_iowait_as_not_busy():
+    # user nice system idle iowait irq softirq steal
+    assert scaling.cpu_times("cpu  100 0 50 800 50 0 0 0\ncpu0 ...\n") == (150, 1000)
+
+
+def test_cpu_log_writes_busy_cores(tmp_path, monkeypatch):
+    stat = tmp_path / "stat"
+    readings = iter(["cpu 0 0 0 100 0", "cpu 50 0 0 150 0", "cpu 150 0 0 150 0"])
+    real = scaling.Path.read_text
+    monkeypatch.setattr(scaling.Path, "read_text",
+                        lambda self, *a, **k: next(readings) if self == stat else real(self, *a, **k))
+    monkeypatch.setattr(scaling.os, "cpu_count", lambda: 8)
+    scaling.cpu_log(tmp_path / "cpu.csv", every=0, stat=stat, rounds=2)
+    rows = list(csv.DictReader((tmp_path / "cpu.csv").read_text().splitlines()))
+    assert [float(r["busy_cores"]) for r in rows] == [4.0, 8.0]   # half busy, then all busy
+    assert rows[0]["cores"] == "8"
+
+
+def test_vm_cpu_is_the_mean_and_peak_in_the_window(tmp_path):
+    (tmp_path / "cpu.csv").write_text("time,busy_cores,cores\n90,7.9,8\n100,4.0,8\n102,6.0,8\n200,8.0,8\n")
+    assert scaling.vm_cpu(tmp_path / "cpu.csv", 100, 150) == (5.0, 6.0, 8)
+    assert scaling.vm_cpu(tmp_path / "none.csv", 0, 1) is None
+
+
+def test_the_report_shows_how_full_the_vm_was(tmp_path):
+    d = tmp_path / "1"
+    d.mkdir()
+    write_run(d / "run-0.csv", [(i / 100, "200", 20, False) for i in range(6000)])
+    (d / "client-0.txt").write_text("Sent ...\nStarted sending at unix 1000.0\n")
+    (d / "window.json").write_text('{"start": 1000, "end": 1060}')
+    (tmp_path / "vm_cpu.csv").write_text("time,busy_cores,cores\n1010,7.0,16\n1020,9.0,16\n")
+    assert "| 8.0 / 9.0 of 16 cores |" in scaling.report(tmp_path)
+
+
+def test_scaling_holds_ingest_and_puts_it_back():
+    text = (ROOT / "scripts/scaling_test.sh").read_text()
+    assert 'scale deploy/ingest-svc --replicas="$INGEST"' in text
+    restore = text[text.index("restore() {"):text.index("trap restore EXIT")]
+    assert 'scale deploy/ingest-svc --replicas="$ORIG_INGEST"' in restore and 'kill "$CPU_LOG"' in restore
