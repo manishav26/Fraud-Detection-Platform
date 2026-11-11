@@ -202,8 +202,9 @@ echo "3/5 Linkerd (if missing), then apply the Kustomize base"
 # Pods whose YAML changed restart by themselves; a changed config map alone restarts nothing
 kubectl apply -k "deploy/k8s/$OVERLAY"
 # `kubectl apply` never deletes what a manifest no longer has. Left over from earlier versions:
-# the ingest-svc Service, replaced by ingest-pods in week 4 (Kong reaches the pods directly)
-kubectl -n "$NS" delete service ingest-svc --ignore-not-found
+# the headless ingest-pods Service, replaced by the normal ingest-svc on 11 Nov (Kong's Linkerd
+# proxy balances across the ingest pods now; docs/k8s.md)
+kubectl -n "$NS" delete service ingest-pods --ignore-not-found
 
 if [ "$MODE" = apply ]; then
   shift

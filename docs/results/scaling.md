@@ -132,7 +132,7 @@ closed connection`). The first drain run never evicted an ingest pod, so it hadn
   error rate.
 
 **Fixes:**
-1. **Kong reaches ingest's pods directly:** a headless Service, `ingest-pods`, whose DNS name
+1. **Kong reaches ingest's pods directly** (replaced on 11 Nov: cause 3 below): a headless Service, `ingest-pods`, whose DNS name
    returns each ready pod. Kong balances across them and, within its 5 s DNS refresh, stops
    choosing a pod that is leaving. Compose has the same name as an alias.
 2. **Ingest waits 15 s before stopping** (was 5 s), longer than that refresh.
@@ -143,6 +143,32 @@ closed connection`). The first drain run never evicted an ingest pod, so it hadn
 
 With these, the same disruption (scoring, ingest and alert pods evicted from one node) gave
 **0 errors in 5,400**.
+
+## Error cause 3: Kong kept expired addresses for ingest (VM, 11 Nov)
+
+Fix 1 above was made before the mesh (Linkerd) existed, and stopped working with it.
+
+**Seen:** the first replay after each `make k8s-reset-data` (which replaces both ingest pods) got
+exactly 2 answers of 502, both among the first payments, answered in 7 and 13 ms; the long runs
+afterwards had none. Kong logged no error. The Linkerd proxy beside Kong logged the cause:
+`endpoint 10.42.0.13:8000 ... Connection refused` (and `10.42.1.18` after the second reset): the
+addresses of the ingest pods the reset had removed, not the running ones (`10.42.0.27`,
+`10.42.4.17`).
+
+**Why:** with `ingest-pods` headless, Kong looks the pods up in DNS itself and, as far as we
+can tell from its documented defaults, keeps serving an expired answer while it refreshes it in
+the background (`dns_stale_ttl`), so the "5 s" above didn't hold: minutes after the reset it
+still sent to the removed pods. And because Kong picked the pod, its Linkerd proxy only forwarded
+to that address (`forward{addr=...}` in the log) instead of balancing.
+
+**Fix:** Kong sends to a normal Service, `ingest-svc`, and its Linkerd proxy balances each
+request across the ready ingest pods, following Kubernetes' list as it changes. Cause 2 doesn't
+come back: the proxy balances requests, not connections, and drops a pod as soon as it leaves the
+ready list; ingest's 15 s pause covers the requests already in flight. Ingest to scoring already
+worked this way.
+
+**Checked:** *(after applying: the reset and replay again, expecting 0 of 2,000 502s; the drain
+rerun, the test that found cause 2, expecting 0 errors; ST2 and ST4)*
 
 ## Other observations
 

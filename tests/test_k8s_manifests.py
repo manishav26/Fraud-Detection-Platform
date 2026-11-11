@@ -118,18 +118,22 @@ def test_services_keep_connections_longer_than_kong():
         assert int(args[args.index("--timeout-keep-alive") + 1]) > kong_s, name
 
 
-def test_kong_balances_across_ingest_pods_directly():
-    # Through a normal Service address Kong's reused connections stayed tied to a leaving pod
-    # (docs/results/scaling.md). Headless: the name returns each ready pod's address.
+def test_kong_sends_to_ingest_through_the_mesh_balancer():
+    """A normal Service: Kong's Linkerd proxy balances each request across the ready ingest pods.
+    Headless (until 11 Nov), Kong resolved the pods itself and served expired DNS answers: after
+    both pods were replaced, its first payments went to gone addresses (502s)."""
     service = next(d for d in DOCS if d["kind"] == "Service"
-                   and d["metadata"]["name"] == "ingest-pods")
-    assert service["spec"]["clusterIP"] == "None"
+                   and d["metadata"]["name"] == "ingest-svc")
+    assert service["spec"].get("clusterIP") != "None"
     assert service["spec"]["selector"] == {"app": "ingest-svc"}
     kong = (BASE.parents[1] / "kong" / "kong.tpl.yml").read_text()
-    assert "url: http://ingest-pods:8000" in kong
-    # Kong refreshes the name every 5 s: the pod must keep answering longer than that
+    assert "url: http://ingest-svc:8000" in kong
+    # a leaving pod keeps answering while Kong's proxy stops sending to it
     pause = container(DEPLOYMENTS["ingest-svc"])["lifecycle"]["preStop"]["sleep"]["seconds"]
     assert pause >= 10
+    # ingest's port is HTTP to the mesh (not opaque), so it is balanced per request
+    ns = next(d for d in DOCS if d["kind"] == "Namespace")["metadata"]["annotations"]
+    assert "8000" not in ns["config.linkerd.io/opaque-ports"].split(",")
 
 
 # ---------- network isolation (week 4, step 3; docs/network.md) ----------
@@ -347,10 +351,12 @@ def test_no_image_floats_on_latest():
     assert ":latest" not in compose
 
 
-def test_the_old_ingest_service_is_gone_for_good():
+def test_the_headless_ingest_service_is_gone_for_good():
     services = {d["metadata"]["name"] for d in DOCS if d["kind"] == "Service"}
-    assert "ingest-svc" not in services and "ingest-pods" in services
-    assert "delete service ingest-svc" in (BASE.parents[2] / "scripts" / "k8s_up.sh").read_text()
+    assert "ingest-pods" not in services and "ingest-svc" in services
+    up = (BASE.parents[2] / "scripts" / "k8s_up.sh").read_text()
+    assert "delete service ingest-pods" in up and "delete service ingest-svc" not in up
+    assert "ingest-pods" not in (BASE.parents[2] / "compose.yaml").read_text()
 
 
 # ---------- the VM's 3-node Cassandra (week 5; deploy/k8s/vm, docs/cassandra.md) ----------

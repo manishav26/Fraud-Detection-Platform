@@ -8,7 +8,7 @@ makes (POST /score). The same call from a real ingest pod, which is in the mesh,
 separates the two layers: the network rules let the packet through; the mesh refuses the caller.
 
 The test pod never takes real traffic: it is never ready (a readiness check that always fails), so
-it is never in the ingest-pods Service that Kong sends payments to. Exit code 1 if anything differs.
+it is never in the ingest-svc Service that Kong sends payments to. Exit code 1 if anything differs.
 """
 
 import json
@@ -44,7 +44,7 @@ OUTSIDE_POD = {
         "containers": [{
             "name": "probe", "image": IMAGE, "imagePullPolicy": "Never",
             "command": ["sleep", "600"],
-            # never ready: never in the ingest-pods Service, so Kong never sends it payments
+            # never ready: never in the ingest-svc Service, so Kong never sends it payments
             "readinessProbe": {"exec": {"command": ["false"]}, "periodSeconds": 5},
         }],
     },
