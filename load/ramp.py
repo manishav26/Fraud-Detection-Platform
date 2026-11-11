@@ -86,6 +86,10 @@ def load_step(folder):
     return step, prom
 
 
+def share(v):
+    return "–" if v is None or math.isnan(v) else f"{v:.2%}"
+
+
 def ms(v):
     return "–" if v is None or (isinstance(v, float) and math.isnan(v)) else f"{v * 1000:.0f}"
 
@@ -106,7 +110,7 @@ def report(root):
         degraded = nan(prom.get("degraded")) / decisions if decisions else math.nan
         out.append(f"| {step['rps']} | {c['rate']:.1f} | {c['p50_ms']:.0f} | {c['p95_ms']:.0f} | "
                    f"{c['p99_ms']:.0f} | {ms((prom.get('p95') or {}).get('ingest-svc'))} | "
-                   f"{c['errors_share']:.3%} | {degraded:.2%} | {step.get('copies') or '–'} | "
+                   f"{c['errors_share']:.3%} | {share(degraded)} | {step.get('copies') or '–'} | "
                    f"{verdicts[step['verdict']]}{': ' + '; '.join(step['missed']) if step['missed'] else ''} |")
     out += ["", "Where the time goes (p95 per hop, ms; p95s don't add up: each is its own slowest 5%)",
             "", ("| Asked /s | End to end | Kong total | Kong itself | Kong -> ingest | ingest server |"

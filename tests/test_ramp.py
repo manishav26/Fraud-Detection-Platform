@@ -121,3 +121,8 @@ def test_steps_past_the_rows_are_refused_before_anything_is_sent():
 
 def test_nan_numbers_render_as_gaps():
     assert ramp.ms(None) == "–" and ramp.ms(math.nan) == "–" and ramp.ms(0.0123) == "12"
+
+
+def test_zero_degraded_passes_and_a_gap_renders_as_a_gap():
+    assert ramp.judge(client(), {**PROM_OK, "degraded": 0}, 100) == (ramp.PASS, [])
+    assert ramp.share(math.nan) == "–" and ramp.share(None) == "–" and ramp.share(0.0) == "0.00%"

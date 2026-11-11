@@ -105,3 +105,12 @@ def test_json_writes_no_data_as_null():
 def test_every_metric_a_ramp_step_needs_is_queried():
     text = " ".join(snapshot.QUERIES.values())
     assert all(m.removesuffix("_bucket") in text for m in snapshot.REQUIRED_METRICS)
+
+
+def test_no_degraded_series_is_zero_only_while_scoring_reports_decisions():
+    """On a cluster that never scored degraded there is no degraded="true" series; the query falls
+    back to 0 x all decisions, which is empty (no data) if scoring reports nothing at all."""
+    expr = snapshot.QUERIES["degraded"].format(w="120s")
+    left, right = expr.split(" or ")
+    assert 'degraded="true"' in left
+    assert right == "0 * sum(increase(scoring_decisions_total[120s]))"

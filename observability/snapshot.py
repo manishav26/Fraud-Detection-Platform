@@ -25,7 +25,11 @@ QUERIES = {
     "p95": "histogram_quantile(0.95, sum by (le, service) (increase(http_request_duration_seconds_bucket[{w}])))",
     "p99": "histogram_quantile(0.99, sum by (le, service) (increase(http_request_duration_seconds_bucket[{w}])))",
     "decisions": "sum by (decision) (increase(scoring_decisions_total[{w}]))",
-    "degraded": 'sum(increase(scoring_decisions_total{{degraded="true"}}[{w}]))',
+    # A labelled series exists only once incremented: with no degraded answer ever, there is no
+    # degraded="true" series and the sum is empty. That means 0, but only if scoring's decisions are
+    # counted at all (the `or` side), so a scoring service that reports nothing stays "no data".
+    "degraded": ('sum(increase(scoring_decisions_total{{degraded="true"}}[{w}]))'
+                 ' or 0 * sum(increase(scoring_decisions_total[{w}]))'),
     "breaker_samples": f"sum_over_time((max(history_breaker_open))[{{w}}:{STEP}])",
     "calls_not_ok": 'sum by (op, result) (increase(history_calls_total{{result!="ok"}}[{w}]))',
     "skipped_writes": "sum(increase(history_skipped_writes_total[{w}]))",
