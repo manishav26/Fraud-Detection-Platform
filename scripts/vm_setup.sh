@@ -24,7 +24,10 @@ fetch() {   # fetch <url> <sha256> <file>: download, check, or stop
 
 echo "1/6 system packages"
 sudo apt-get update -q
-sudo apt-get install -yq ca-certificates curl gnupg tmux rsync git jq software-properties-common
+# make runs every step (Makefile); openssl makes keys and passwords; netcat waits for tunnels.
+# Ubuntu's cloud image leaves some of these out.
+sudo apt-get install -yq ca-certificates curl gnupg tmux rsync git jq make openssl \
+  netcat-openbsd software-properties-common
 
 echo "2/6 Docker, from Docker's own repository"
 if ! command -v docker >/dev/null; then
@@ -77,6 +80,15 @@ if [ ! -f "$KEY" ]; then
   (umask 077; age-keygen -o "$KEY" 2>/dev/null)
 fi
 chmod 600 "$KEY"
+
+# Every command our scripts and Makefile call, so a missing one stops the setup here and not
+# halfway through `make k8s-up`
+MISSING=()
+for c in make openssl nc jq git rsync base64 sha256sum shasum curl gpg awk sed tr timeout watch \
+         tmux docker k3d kubectl linkerd sops age age-keygen python3.11; do
+  command -v "$c" >/dev/null || MISSING+=("$c")
+done
+[ ${#MISSING[@]} -eq 0 ] || { echo "Still missing: ${MISSING[*]}" >&2; exit 1; }
 
 echo
 docker --version; docker compose version; k3d version | head -1; kubectl version --client | head -1
