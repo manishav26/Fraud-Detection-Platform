@@ -296,10 +296,16 @@ spec:
     - from:  # features_by_txn, user_features
         - podSelector: {matchLabels: {app: feature-job}}
       ports: [{protocol: TCP, port: 9042}, {protocol: TCP, port: 4143}]
+    - from:  # node to node: gossip and copies
+        - podSelector: {matchLabels: {app: cassandra}}
+      ports: [{protocol: TCP, port: 7000}, {protocol: TCP, port: 4143}]
     - from:  # its Linkerd proxy's metrics
         - podSelector: {matchLabels: {app: prometheus}}
       ports: [{protocol: TCP, port: 4191}]
-  egress: []   # may call nothing (DNS and mesh only, above)
+  egress:
+    - to:  # node to node: gossip and copies
+        - podSelector: {matchLabels: {app: cassandra}}
+      ports: [{protocol: TCP, port: 7000}, {protocol: TCP, port: 4143}]
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

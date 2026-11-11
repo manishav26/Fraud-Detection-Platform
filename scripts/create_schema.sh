@@ -16,7 +16,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# How to run cqlsh: in the compose container by default; scripts/k8s_up.sh points it at the pod.
+# How to run cqlsh and nodetool: in the compose container by default; scripts/k8s_up.sh points
+# them at the pod.
+NODETOOL="${NODETOOL:-docker compose exec -T cassandra nodetool}"
+# Copies of every row: 1 on a single node (compose, the laptop's cluster), 3 on the VM's 3 nodes
+# (OVERLAY=vm; docs/cassandra.md, "Three nodes")
+RF="${CASSANDRA_RF:-1}"
 CQLSH="${CQLSH:-docker compose exec -T cassandra cqlsh}"
 ADMIN_USER=fraud_admin
 DEV_ADMIN_PASSWORD=fraud_admin_dev_only   # compose; and a cluster from before the encrypted ones
@@ -59,6 +64,28 @@ fi
 
 admin() { as "$ADMIN_USER" "$ADMIN_PASSWORD" "$@"; }
 admin < deploy/cassandra/schema.cql   # on stdin, so no file has to exist inside the container
+
+# Replication, set on every run (schema.cql creates the keyspace with 1 copy; IF NOT EXISTS would
+# keep whatever it has). More copies than live nodes would make every LOCAL_QUORUM write fail.
+live=$($NODETOOL status 2>/dev/null | grep -c '^UN' || true)
+if [ "$live" -lt "$RF" ]; then
+  echo "CASSANDRA_RF=$RF but only $live node(s) are up and normal: refusing" >&2
+  exit 1
+fi
+# The logins (system_auth) get the same copies: Cassandra keeps them at 1 copy by default, so on
+# 3 nodes losing the one node that holds them would make every login fail, and scoring would lose
+# Cassandra entirely even though the data has 3 copies.
+admin <<CQL
+ALTER KEYSPACE fraud WITH replication = {'class': 'NetworkTopologyStrategy', 'datacenter1': $RF};
+ALTER KEYSPACE system_auth WITH replication = {'class': 'NetworkTopologyStrategy', 'datacenter1': $RF};
+CQL
+if [ "$RF" -gt 1 ]; then
+  # Copy the existing logins to the new replicas (a small keyspace: seconds). The data keyspace
+  # is created before any data on a new cluster, so it needs no repair; raising its copies on a
+  # cluster that already holds data would need `nodetool repair -full fraud` once (docs/cassandra.md).
+  $NODETOOL repair -full system_auth
+fi
+echo "replication: $RF copies of fraud and system_auth on $live node(s)"
 
 # set_login <role> <password>: make sure the login exists and takes this password. A new login is
 # created with its password in one statement; an existing one is changed only if it doesn't take

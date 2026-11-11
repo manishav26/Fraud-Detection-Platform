@@ -95,7 +95,13 @@ tmux new -s fraud
 cd ~/fraud && source .venv/bin/activate
 ```
 ```bash
-make cluster AGENTS=3 && make k8s-up && make k8s-backfill
+make cluster AGENTS=3 && OVERLAY=vm make k8s-up && make k8s-backfill
+```
+`OVERLAY=vm` gives Cassandra 3 nodes, one per k3d agent (`docs/cassandra.md`, "Three nodes"); they
+join one after another, so `k8s-up` takes a few minutes longer. Check all three are up (`UN`) and
+both keyspaces have 3 copies:
+```bash
+kubectl -n fraud exec cassandra-0 -c cassandra -- nodetool status
 ```
 `tmux` keeps a long test running if the SSH connection drops (`tmux attach -t fraud` to get back).
 If `k8s-up` stops with "Could not decrypt ... is your age key in ...", step 4 hasn't reached the
@@ -149,9 +155,8 @@ That kubeconfig is the cluster's admin login: keep it at mode 600 and delete it 
 
 ## Not covered here
 
-- **The 3-node Cassandra** (3 replicas, replication factor 3, one per node; the consistency
-  settings) changes the manifests and the schema: its own design, before the consistency and
-  failure tests.
+- **The consistency and failure tests themselves** (ONE vs QUORUM, a node killed): their own
+  designs, on this VM, once the 3-node Cassandra is up.
 - **gen_keys on the VM:** with only the promotion public key there, `scripts/gen_keys.sh` keeps it
   (it used to make a new pair whenever the private key was missing, which would have replaced the
   laptop's public key and made every promotion fail).

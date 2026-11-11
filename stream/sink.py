@@ -70,13 +70,30 @@ class FeatureSink:
         import time
 
         from cassandra.auth import PlainTextAuthProvider
-        from cassandra.cluster import Cluster, NoHostAvailable
+        from cassandra.cluster import (
+            EXEC_PROFILE_DEFAULT,
+            Cluster,
+            ExecutionProfile,
+            NoHostAvailable,
+        )
+        from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
+        from cassandra.query import ConsistencyLevel
 
         hosts = hosts or os.getenv("CASSANDRA_HOSTS", "localhost").split(",")
         auth = PlainTextAuthProvider(os.getenv("CASSANDRA_USER", "features"),
                                      os.getenv("CASSANDRA_PASSWORD", "features_dev_only"))
+        # The same as scoring (store/history.py): LOCAL_QUORUM, so with 3 copies (the VM) a write
+        # is on 2 nodes before it counts and the tables survive one node going down. The driver's
+        # default (LOCAL_ONE) would count a write on one node only. Each write goes straight to a
+        # node holding its partition.
+        level = os.getenv("CASSANDRA_CONSISTENCY", "LOCAL_QUORUM")
+        profile = ExecutionProfile(
+            load_balancing_policy=TokenAwarePolicy(
+                DCAwareRoundRobinPolicy(local_dc=os.getenv("CASSANDRA_DC", "datacenter1"))),
+            consistency_level=ConsistencyLevel.name_to_value[level])
         for attempt in range(1, attempts + 1):
-            self.cluster = Cluster(hosts, auth_provider=auth)
+            self.cluster = Cluster(hosts, auth_provider=auth,
+                                   execution_profiles={EXEC_PROFILE_DEFAULT: profile})
             try:
                 self.session = self.cluster.connect(keyspace)
                 break

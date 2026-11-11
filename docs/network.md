@@ -39,6 +39,7 @@ flowchart LR
 | ingest-svc | scoring-svc | 8000 | a decision per payment |
 | ingest-svc | redpanda | 29092 | txn.raw, txn.scored, dlq.txn |
 | scoring-svc | cassandra | 9042 | user history |
+| cassandra | cassandra | 7000 | node to node: gossip and copies (the VM's 3 nodes; a single node has no peer to call) |
 | scoring-svc | redpanda | 29092 | model.events (promotions) |
 | scoring-svc | mlflow | 5000 | download a promoted model |
 | alert-svc | redpanda, postgres, siem-mock | 29092, 5432, 8000 | txn.scored; cases and the audit log; audit rows to the SIEM (`docs/siem.md`) |

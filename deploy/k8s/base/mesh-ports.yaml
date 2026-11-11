@@ -93,3 +93,60 @@ spec:
   targetRef: {group: policy.linkerd.io, kind: Server, name: redpanda-9644}
   requiredAuthenticationRefs:
     - {group: policy.linkerd.io, kind: MeshTLSAuthentication, name: redpanda-9644-callers}
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: cassandra-9042
+spec:
+  podSelector:
+    matchLabels: {app: cassandra}
+  port: 9042
+  proxyProtocol: opaque
+  accessPolicy: deny   # only the callers below
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: cassandra-9042-callers
+spec:
+  identityRefs:   # feature-job, scoring-svc
+    - {kind: ServiceAccount, name: feature-job}
+    - {kind: ServiceAccount, name: scoring-svc}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: cassandra-9042
+spec:
+  targetRef: {group: policy.linkerd.io, kind: Server, name: cassandra-9042}
+  requiredAuthenticationRefs:
+    - {group: policy.linkerd.io, kind: MeshTLSAuthentication, name: cassandra-9042-callers}
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: cassandra-7000
+spec:
+  podSelector:
+    matchLabels: {app: cassandra}
+  port: 7000
+  proxyProtocol: opaque
+  accessPolicy: deny   # only the callers below
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: cassandra-7000-callers
+spec:
+  identityRefs:   # cassandra
+    - {kind: ServiceAccount, name: cassandra}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: cassandra-7000
+spec:
+  targetRef: {group: policy.linkerd.io, kind: Server, name: cassandra-7000}
+  requiredAuthenticationRefs:
+    - {group: policy.linkerd.io, kind: MeshTLSAuthentication, name: cassandra-7000-callers}

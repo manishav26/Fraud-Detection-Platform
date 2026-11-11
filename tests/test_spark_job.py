@@ -141,3 +141,27 @@ def test_the_unreadable_key_can_never_be_a_user_id():
 
     from app.main import ID_PATTERN  # ingest-svc
     assert re.match(ID_PATTERN, "1|2|3") and not re.match(ID_PATTERN, spark_job.UNREADABLE_KEY)
+
+
+def test_the_feature_job_writes_at_local_quorum(monkeypatch):
+    """The same as scoring: with 3 copies a write counts once 2 nodes have it (docs/cassandra.md)."""
+    import cassandra.cluster as cc
+
+    from stream.sink import FeatureSink
+    seen = {}
+
+    class FakeCluster:
+        def __init__(self, hosts, auth_provider, execution_profiles):
+            seen["profile"] = execution_profiles[cc.EXEC_PROFILE_DEFAULT]
+
+        def connect(self, keyspace):
+            class Session:
+                def prepare(self, query):
+                    return query
+            return Session()
+
+    monkeypatch.setattr(cc, "Cluster", FakeCluster)
+    monkeypatch.delenv("CASSANDRA_CONSISTENCY", raising=False)
+    FeatureSink(hosts=["x"])
+    from cassandra import ConsistencyLevel
+    assert seen["profile"].consistency_level == ConsistencyLevel.LOCAL_QUORUM

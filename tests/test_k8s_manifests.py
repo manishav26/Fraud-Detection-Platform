@@ -222,7 +222,8 @@ def test_namespace_is_meshed_and_accepts_only_meshed_callers():
     ns = next(d for d in DOCS if d["kind"] == "Namespace")["metadata"]["annotations"]
     assert ns["linkerd.io/inject"] == "enabled"
     assert ns["config.linkerd.io/default-inbound-policy"] == "all-authenticated"
-    assert set(ns["config.linkerd.io/opaque-ports"].split(",")) == {"9042", "29092", "5432"}
+    # Cassandra's clients and node-to-node port (7000, the VM's 3 nodes), Redpanda, Postgres
+    assert set(ns["config.linkerd.io/opaque-ports"].split(",")) == {"9042", "7000", "29092", "5432"}
 
 
 def test_only_kongs_public_port_accepts_callers_outside_the_mesh():
@@ -348,3 +349,70 @@ def test_the_old_ingest_service_is_gone_for_good():
     services = {d["metadata"]["name"] for d in DOCS if d["kind"] == "Service"}
     assert "ingest-svc" not in services and "ingest-pods" in services
     assert "delete service ingest-svc" in (BASE.parents[2] / "scripts" / "k8s_up.sh").read_text()
+
+
+# ---------- the VM's 3-node Cassandra (week 5; deploy/k8s/vm, docs/cassandra.md) ----------
+
+VM = BASE.parent / "vm"
+VM_DOCS = {f.name: [d for d in yaml.safe_load_all(f.read_text()) if d] for f in VM.glob("*.yaml")}
+
+
+def test_the_laptop_keeps_one_cassandra_node():
+    cassandra = next(d for d in DOCS if d["kind"] == "StatefulSet" and d["metadata"]["name"] == "cassandra")
+    assert cassandra["spec"]["replicas"] == 1
+
+
+def test_the_vm_overlay_is_the_base_plus_three_cassandra_nodes():
+    kustomization = VM_DOCS["kustomization.yaml"][0]
+    assert kustomization["resources"] == ["../base", "cassandra-peers.yaml"]
+    assert [p["path"] for p in kustomization["patches"]] == ["cassandra-3-nodes.yaml"]
+
+
+def test_three_nodes_one_per_machine_started_one_at_a_time():
+    [sts] = VM_DOCS["cassandra-3-nodes.yaml"]
+    spec = sts["spec"]
+    assert (spec["replicas"], spec["serviceName"], spec["podManagementPolicy"]) == \
+        (3, "cassandra-peers", "OrderedReady")
+    [rule] = spec["template"]["spec"]["affinity"]["podAntiAffinity"][
+        "requiredDuringSchedulingIgnoredDuringExecution"]
+    assert rule["topologyKey"] == "kubernetes.io/hostname"
+    assert rule["labelSelector"] == {"matchLabels": {"app": "cassandra"}}
+    [c] = spec["template"]["spec"]["containers"]
+    seeds = {e["name"]: e["value"] for e in c["env"]}["CASSANDRA_SEEDS"]
+    assert seeds == "cassandra-0.cassandra-peers.fraud.svc.cluster.local"
+    assert {"name": "intra-node", "containerPort": 7000} in c["ports"]
+
+
+def test_a_node_is_ready_only_when_cassandra_serves_clients():
+    """Not the base's TCP check, which the Linkerd proxy answers before Cassandra is up: the
+    next node must not start bootstrapping while this one still is."""
+    [sts] = VM_DOCS["cassandra-3-nodes.yaml"]
+    probe = sts["spec"]["template"]["spec"]["containers"][0]["readinessProbe"]
+    assert probe["$patch"] == "replace" and "tcpSocket" not in probe
+    assert "nodetool statusbinary" in " ".join(probe["exec"]["command"])
+
+
+def test_peers_find_each_other_and_a_drain_takes_one_node_at_most():
+    service, budget = VM_DOCS["cassandra-peers.yaml"]
+    assert service["spec"]["clusterIP"] == "None" and service["spec"]["publishNotReadyAddresses"]
+    assert service["spec"]["ports"] == [{"name": "intra-node", "port": 7000}]
+    assert service["metadata"]["annotations"]["config.linkerd.io/opaque-ports"] == "7000"
+    assert budget["kind"] == "PodDisruptionBudget" and budget["spec"]["maxUnavailable"] == 1
+
+
+def test_node_to_node_traffic_is_allowed_only_between_cassandra_nodes_and_meshed():
+    from security.tests.network_paths import LISTENS, PATHS
+    assert [p[:3] for p in PATHS if p[2] == 7000] == [("cassandra", "cassandra", 7000)]
+    assert 7000 in LISTENS["cassandra"]
+    ns = next(d for d in DOCS if d["kind"] == "Namespace")["metadata"]["annotations"]
+    assert "7000" in ns["config.linkerd.io/opaque-ports"].split(",")
+
+
+def test_copies_follow_the_overlay_and_cover_the_logins():
+    up = (BASE.parents[2] / "scripts" / "k8s_up.sh").read_text()
+    assert "base) CASSANDRA_RF=1" in up and "vm) CASSANDRA_RF=3" in up
+    assert 'kubectl apply -k "deploy/k8s/$OVERLAY"' in up
+    schema = (BASE.parents[2] / "scripts" / "create_schema.sh").read_text()
+    assert "ALTER KEYSPACE fraud WITH replication" in schema
+    assert "ALTER KEYSPACE system_auth WITH replication" in schema
+    assert "repair -full system_auth" in schema
