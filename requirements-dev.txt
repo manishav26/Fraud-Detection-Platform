@@ -20,3 +20,5 @@ psycopg[binary]==3.3.7
 # MLflow client for make register / make promote: same version as services/mlflow
 mlflow-skinny==3.17.2
 prometheus-client==0.26.0
+# ST5: fuzzing the OpenAPI contract (make k8s-st5)
+schemathesis==4.32.7

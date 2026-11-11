@@ -21,6 +21,9 @@ PATHS = [
     ("alert-svc", "siem-mock", 8000, "audit rows to the SIEM"),
     ("feature-job", "redpanda", 29092, "txn.raw"),
     ("feature-job", "cassandra", 9042, "features_by_txn, user_features"),
+    # Node to node: gossip and copies of each write (the VM's 3 nodes, docs/cassandra.md); a
+    # single node (the laptop) listens on it too but has no peer to call
+    ("cassandra", "cassandra", 7000, "node to node: gossip and copies"),
     ("model-admin-svc", "redpanda", 29092, "model.events"),
     ("model-admin-svc", "postgres", 5432, "audit log"),
     ("mlflow", "postgres", 5432, "registry database"),
@@ -45,7 +48,7 @@ PUBLIC = {("kong", 8000)}
 LISTENS = {
     "kong": [8000, 8100], "token-issuer": [8000], "ingest-svc": [8000], "scoring-svc": [8000],
     "alert-svc": [8000], "model-admin-svc": [8000], "siem-mock": [8000], "feature-job": [8000], "mlflow": [5000],
-    "redpanda": [29092, 9644], "cassandra": [9042], "postgres": [5432], "objectstore": [9000],
+    "redpanda": [29092, 9644], "cassandra": [9042, 7000], "postgres": [5432], "objectstore": [9000],
     "prometheus": [9090], "grafana": [3000],
 }
 

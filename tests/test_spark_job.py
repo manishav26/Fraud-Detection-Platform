@@ -119,3 +119,49 @@ def test_a_write_that_keeps_failing_stops_the_batch(monkeypatch):
     with pytest.raises(TimeoutError):
         sink._write_all("stmt", ["a", "b"], 32)
     assert tries["b"] == 4 and tries["a"] == 1   # 1 try + 3 retries, then the batch fails
+
+
+def test_unreadable_messages_are_counted_and_write_nothing():
+    """What the Spark parse step sends for a message it can't read (a time Java can't parse, no
+    txn_id, ...): grouped under UNREADABLE_KEY, counted, never written, never fatal."""
+    bad = pd.DataFrame([{**payment(None, spark_job.UNREADABLE_KEY, 0), "t": float("nan")},
+                        {**payment("bad-time", spark_job.UNREADABLE_KEY, 0), "t": float("nan")}])
+    state, out = spark_job.apply_group(None, bad)
+    assert list(out["status"]) == [st.UNREADABLE, st.UNREADABLE]
+    assert json.loads(state) == json.loads(st.dumps(st.empty()))   # no user state for them
+    _, good = spark_job.apply_group(None, pd.DataFrame([payment("a", "1|2|3", 0)]))
+    features, users, counts, _ = spark_job.batch_rows(pd.concat([good, out]), NOW)
+    assert counts == {st.NEW: 1, st.UNREADABLE: 2}
+    assert [f[2] for f in features] == ["a"] and len(users) == 1
+
+
+def test_the_unreadable_key_can_never_be_a_user_id():
+    """ingest refuses any id with a character outside its pattern, and "~" is one."""
+    import re
+
+    from app.main import ID_PATTERN  # ingest-svc
+    assert re.match(ID_PATTERN, "1|2|3") and not re.match(ID_PATTERN, spark_job.UNREADABLE_KEY)
+
+
+def test_the_feature_job_writes_at_local_quorum(monkeypatch):
+    """The same as scoring: with 3 copies a write counts once 2 nodes have it (docs/cassandra.md)."""
+    import cassandra.cluster as cc
+
+    from stream.sink import FeatureSink
+    seen = {}
+
+    class FakeCluster:
+        def __init__(self, hosts, auth_provider, execution_profiles):
+            seen["profile"] = execution_profiles[cc.EXEC_PROFILE_DEFAULT]
+
+        def connect(self, keyspace):
+            class Session:
+                def prepare(self, query):
+                    return query
+            return Session()
+
+    monkeypatch.setattr(cc, "Cluster", FakeCluster)
+    monkeypatch.delenv("CASSANDRA_CONSISTENCY", raising=False)
+    FeatureSink(hosts=["x"])
+    from cassandra import ConsistencyLevel
+    assert seen["profile"].consistency_level == ConsistencyLevel.LOCAL_QUORUM

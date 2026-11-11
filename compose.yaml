@@ -100,7 +100,10 @@ services:
     networks:
       default:
         aliases: [ingest-pods]   # the name Kong uses, the same as on Kubernetes
-    environment: { SCORING_URL: "http://scoring-svc:8000", KAFKA_BOOTSTRAP: "redpanda:29092" }
+    environment:
+      SCORING_URL: "http://scoring-svc:8000"
+      KAFKA_BOOTSTRAP: "redpanda:29092"
+      PSEUDONYM_KEY: "pseudonym_dev_only"   # dev key; the cluster's is encrypted (docs/privacy.md)
     depends_on: [scoring-svc, redpanda]
   alert-svc:  # opens cases from txn.scored. Design: docs/alerts.md
     build: { context: ., dockerfile: services/alert-svc/Dockerfile }

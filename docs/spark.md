@@ -48,7 +48,7 @@ before the user's latest payment are dropped on every update, so state stays sma
 | same `txn_id` already in the window | **duplicate**: skipped. Earlier replays re-sent the same payments, and Kafka can redeliver |
 | more than 30 days older than the user's latest payment | **late**: dropped (its window is gone) |
 | slightly out of order | slotted in by time; it doesn't count later payments as its past |
-| unreadable message | dropped before the per-user step |
+| unreadable message (no txn_id, user_id or amount, or a time Spark can't read) | grouped under a reserved key (`~unreadable`, which no id can be), counted as `feature_job_payments_total{outcome="unreadable"}`, written nowhere. The time is read with `try_to_timestamp`: a strict cast once failed a whole batch on one fuzzed time, and the job crash-looped retrying it (week 5) |
 
 Inside a micro-batch, a user's payments are sorted by time, then partition and offset.
 
@@ -107,7 +107,7 @@ The two cluster runs use their own topics and a new checkpoint folder, then put 
 - **One copy in local mode.** Spark scales by topic partitions and executors; this laptop can't
   hold a Spark cluster.
 - **Features are about a second behind** (micro-batches), which is why scoring doesn't read them.
-- **Unreadable messages are dropped** before the per-user step and not counted separately.
+- **Unreadable messages are dropped**, and counted (`outcome="unreadable"`), in both engines; `make spark-smoke` sends four through the real query.
 - **The image is about 1.8 GB** (Java and Spark). Spark's bundled Java libraries carried known
   vulnerabilities: see "Supply chain" below.
 

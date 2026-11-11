@@ -10,7 +10,7 @@ scans on every push, the same ones on the laptop. Test: ST10 (CI green, no unwai
 |---|---|---|---|
 | secrets | gitleaks v8.30.1 | every commit in the history | any secret it recognises |
 | deps | pip-audit 2.10.1 (in `python:3.11-slim`) | the versions pinned in `requirements-dev.txt` and each service's `requirements.txt` | any known vulnerability |
-| config | Trivy 0.76.1 | Dockerfiles, Kubernetes YAML, compose | HIGH or CRITICAL settings |
+| config | Trivy 0.76.1 (kustomize v5.8.1 for overlays) | Dockerfiles, Kubernetes YAML, compose; each overlay as kustomize builds it | HIGH or CRITICAL settings |
 | images | Trivy 0.76.1 | our 6 built images: OS packages and every Python package actually installed | HIGH or CRITICAL with a fix available |
 
 - **pip-audit checks exactly our pins** (`--no-deps`). What those packages pull in is checked
@@ -19,6 +19,22 @@ scans on every push, the same ones on the laptop. Test: ST10 (CI green, no unwai
   can't be acted on; it shows in the report but doesn't block.
 - **Waivers are named, per file, with a reason:** `.trivyignore.yaml`, `.gitleaks.toml` (none
   needed so far). A waiver covers only the files it lists.
+
+## Overlays (week 5)
+
+An overlay's patch files (such as `deploy/k8s/vm/cassandra-3-nodes.yaml`) are fragments:
+kustomize merges them into the base before anything is deployed. Read on its own, the Cassandra
+patch looked like a pod with no security settings at all (KSV-0118), though the merged pod keeps
+the base's. So `scripts/scan.sh config` scans what is really deployed:
+
+1. Every file as it is, **except the patch files** every overlay's `kustomization.yaml` names
+   (`scripts/overlay_manifests.py patches`), so a new patch is skipped without a list to keep.
+2. **Each overlay as kustomize builds it**, one file per resource:
+   `merged/<overlay>/<Kind>-<name>.yaml`. Same rules, same waiver file.
+
+Waivers for the merged files repeat the base's, resource by resource, with the same reasons; a
+test (`tests/test_scan_overlays.py`) checks that a merged waiver exists only where the base file
+has the same one, so a patch that removed a security setting would still fail the scan.
 
 ## What the first scan found, and what changed
 

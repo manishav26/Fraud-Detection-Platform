@@ -11,6 +11,13 @@ metadata:
     # A pod accepts only callers that are in the mesh. Kong's public port is the one exception
     # (deploy/k8s/base/mesh.yaml); Kubernetes' probes are allowed by Linkerd itself.
     config.linkerd.io/default-inbound-policy: all-authenticated
-    # Not HTTP: the proxies encrypt these without trying to read them (Cassandra, Redpanda,
-    # Postgres)
-    config.linkerd.io/opaque-ports: "9042,29092,5432"
+    # Not HTTP: the proxies encrypt these without trying to read them (Cassandra's clients and
+    # its node-to-node port, Redpanda, Postgres)
+    config.linkerd.io/opaque-ports: "9042,7000,29092,5432"
+    # Resources for every injected proxy (week 5): without a request the scheduler doesn't count
+    # it, and an HPA that adds up a pod's containers can't compute (it broke scoring's HPA). No
+    # CPU limit, as for our services, so a proxy is never throttled mid-request. Measured on 10 Nov
+    # (kubectl top --containers): 10-14 MiB and 3-10m CPU per proxy; the limit leaves about 10x.
+    config.linkerd.io/proxy-cpu-request: "10m"
+    config.linkerd.io/proxy-memory-request: "20Mi"
+    config.linkerd.io/proxy-memory-limit: "128Mi"

@@ -1,6 +1,6 @@
 # Feature schema: the contract between ML (Manisha) and platform (Urmi).
 # Changes need both approvals.
-version: 0.1.0
+version: 0.2.0   # 0.2.0: attr types (text_attrs) and the payment time's range, week 5
 dataset: IEEE-CIS Fraud Detection
 entity_key: user_id        # proxy user id v1: card1 | addr1 | card start day
 time_field: ts             # every history feature uses only events strictly before ts
@@ -10,7 +10,7 @@ request_fields:
   - {name: txn_id,    type: string,   required: true,  source: TransactionID}
   - {name: user_id,   type: string,   required: true,  source: "proxy id v1"}
   - {name: amount,    type: float,    required: true,  source: TransactionAmt}
-  - {name: ts,        type: datetime, required: true,  source: TransactionDT}
+  - {name: ts,        type: datetime, required: true,  source: TransactionDT}   # see payment_time
   - {name: channel,   type: string,   required: false, source: DeviceType}
 
 # 2. attrs: raw IEEE-CIS columns sent inside the request's attrs map (51 keys, max 64)
@@ -24,6 +24,21 @@ attrs:
   timedeltas:  [D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15]
   match_flags: [M1, M2, M3, M4, M5, M6, M7, M8, M9]
   missing_values: allowed   # any attr may be null; LightGBM handles missing values
+
+# Type of each attr (week 5; enforced by features/contract.py in ingest and scoring). These 15 are
+# text (the model's categorical features); every other attr is a number. The API refuses text in a
+# number attr, a number in a text attr, unknown attrs, and text over attr_text_max_length
+# characters (the data's longest is 16). Checked against the data, the model and docs/openapi.yaml
+# by tests/test_contract.py.
+text_attrs: [card4, card6, ProductCD, P_emaildomain, R_emaildomain, DeviceType,
+             M1, M2, M3, M4, M5, M6, M7, M8, M9]
+attr_text_max_length: 256
+
+# ts (week 5; features/contract.py): an RFC 3339 time with a time zone offset between -12:00 and
+# +14:00 (every real time zone), dated 1970-2099 in UTC. Anything else gets 422. ingest stores it
+# in UTC ("...Z"), so every reader gets one format. Why: a fuzzed "0387-08-26T14:46:05-21:11"
+# passed ingest, and Spark (Java allows offsets up to 18:00 only) couldn't read it.
+payment_time: {min_offset: "-12:00", max_offset: "+14:00", min_year: 1970, max_year: 2099}
 
 # 3. Request-time features: computed in scoring-svc from the request alone
 request_time_features:

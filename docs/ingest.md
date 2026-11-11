@@ -52,3 +52,64 @@ and other containers, so there are two listeners:
 |---|---|---|
 | internal | `redpanda:29092` | containers (ingest-svc, later the stream job) |
 | external | `localhost:9092` | your laptop (tools, scripts) |
+
+## Replays (threat 6, ST12)
+
+A request captured on the way in could be sent again. Two controls:
+
+- **A 5-minute window on the token.** Kong checks a token's signature and expiry (tokens live 15
+  minutes). For payments, ingest also reads the token's signed issue time (`iat`) and refuses a
+  token issued more than 5 minutes ago (30 s allowed for clock drift): **401 "token too old for a
+  payment"**, before anything is stored. A missing or unreadable token gets 401 too. Our sender
+  takes a new token every 4 minutes, so it never meets the limit. Other routes keep the 15 minutes.
+- **Inside the window, `txn_id` is the idempotency key.** The same payment again gets the same
+  answer and changes nothing: Cassandra's history row is an upsert on (user, time, txn_id), a
+  case is unique per txn_id, and the feature job skips a txn_id it has seen. `txn.raw` and
+  `txn.scored` keep both copies, because they are logs; every reader of them is idempotent.
+
+`make k8s-st12` checks both: the same flagged payment twice, and tokens issued 10 and 1 minutes ago.
+
+## Input (threat 5, ST5 and ST6)
+
+**One contract, checked at the edge and again in scoring.** `features/schema.yaml` lists the 51
+attrs and, since week 5, their types: 15 are text (the model's categorical features), the other
+36 numbers. `features/contract.py` turns that into one strict model, used by ingest and scoring:
+
+| Input | Answer |
+|---|---|
+| a number attr as text (`"D15": "AAA"`), as true/false, or as NaN / Infinity | 422 |
+| a text attr as a number, or over 256 characters (the data's longest is 16) | 422 |
+| an attr that isn't one of the 51 | 422 |
+| `txn_id` / `user_id` with anything but letters, digits and `. _ : \| -` | 422 |
+| `channel` over 256 characters | 422 |
+| `ts` without a time zone, with an offset outside -12:00 to +14:00, or outside 1970-2099 (UTC) | 422 |
+
+Every 422 keeps a copy in `dlq.txn` and stores nothing else. **ingest stores `ts` in UTC**
+(`...Z`), so every reader (Spark, the Python writer, Cassandra, cases) gets one form and never an
+offset. Why the time rule: ST5 sent `0387-08-26T14:46:05-21:11`; Python accepts offsets up to
+23:59, so ingest and scoring took it, but Java allows 18:00 at most, and the Spark feature job's
+strict cast failed on it. One bad row failed the batch, and every restart retried the same batch
+from its checkpoint: a crash loop that stopped all feature computation. **Why:** ST5's fuzzer sent text in a
+number attr; ingest and scoring both took any text or number for any attr, and the model's encoder
+crashed on `float('AAA')`, a 500. The attr rules lived in three places that disagreed (the
+contract had names only; the OpenAPI file had types; the services had neither). Tests now check
+that the OpenAPI file, the model's categorical features and all three data splits agree with
+`features/schema.yaml`, so a retrain or a doc edit can't drift from it.
+
+**422s never echo the input** (all services, `observability/http.py`): each problem is listed by
+where it is and what it is. FastAPI's own answer repeats every bad value, which reflects the
+caller's input, and failed with a 500 on `NaN` (Python's JSON reader takes it, but it can't be
+written back out); found while testing the contract.
+
+**Free text stays free** (channel, the text attrs, a case note) within those limits, and is stored
+exactly as sent: every query takes values as parameters (prepared CQL, parameterized SQL). Notes
+can't hold a NUL character, which Postgres text can't store (422; found while writing ST6).
+
+**When scoring fails after the payment is recorded** (an error answer, no answer in time, a broken
+connection after the one retry, or an answer that isn't a decision): **503 "recorded but not
+scored: retry with the same txn_id"**, the contract's meaning of 503, since `txn_id` makes the
+retry harmless. It is logged and counted (`ingest_scoring_failures_total{kind}`); nothing goes to
+`txn.scored` until the retry. Before, it was a bare 500.
+
+`make k8s-st6` sends injection strings into every text field; `make k8s-st5` fuzzes the OpenAPI
+contract with Schemathesis.

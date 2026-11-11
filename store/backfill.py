@@ -16,6 +16,7 @@ from cassandra.concurrent import execute_concurrent_with_args
 
 from features.proxy_id import add_proxy_id
 from load.replay import clean, to_ts
+from pseudonym import pseudonym
 from store.history import COLUMNS, HistoryStore, is_known, row_values
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,8 +35,13 @@ def load_known(files):
 
 
 def known_rows(df):
+    """Known users only, under their pseudonyms, exactly as ingest stores them (docs/privacy.md):
+    the history rows must match the ids live payments arrive with. Needs the cluster's key
+    (PSEUDONYM_KEY, via scripts/k8s_secrets.sh run); compose uses the dev key."""
     df = add_proxy_id(df)
-    return df[df["uid"].map(is_known)].reset_index(drop=True)
+    df = df[df["uid"].map(is_known)].reset_index(drop=True)
+    df["uid"] = df["uid"].map(pseudonym)
+    return df
 
 
 def to_values(row):

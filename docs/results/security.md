@@ -8,15 +8,15 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 | ST2 | Each role calls every route | **pass**: all 60 calls (10 routes, 6 callers, including the week 4 model and case-system routes and the `tester` role) match the roles table (cluster, 10 Nov) | below; `make st2`; `docs/results/model_admin.md` |
 | ST3 | A pod outside the mesh, allowed by the network rules, calls scoring's `POST /score` | **pass** (cluster): refused with 403; the same call from a real, meshed ingest pod answered 200 | below; `make k8s-st3`; `docs/mtls.md` |
 | ST4 | Every workload and a pod with no labels try every pod and port | **pass** (cluster): only the allowed paths connect (25 since the SIEM); the intruder pod reaches nothing. Before the policies, every pod reached every port. Cassandra logins: scoring may only read and write its one table, and the old dev passwords are refused (12 of 12 checks). Redpanda logins (week 5): each workload may use only its topics, no login and a wrong password are refused (19 of 19 checks, 10 Nov) | below; `make k8s-st4`, `make k8s-kafka-check`; `docs/network.md`, `docs/kafka.md` |
-| ST5 | Schemathesis fuzzing | pending (week 5) | |
-| ST6 | Injection strings | pending (week 5) | |
+| ST5 | Schemathesis fuzzing | **pass** (cluster, 10 Nov): 2,240 cases (1,012 payments as load-test, 1,012 as merchant-1, 216 case-status), no 5xx. First found a 500 (text in a number attr) and a crash loop in the feature job (a time Java can't read); both fixed at the root, then passed | below; `make k8s-st5`; `docs/ingest.md` "Input" |
+| ST6 | Injection strings | **pass** (cluster, 10 Nov): 63 requests with 10 kinds of injection string in every text field, no 5xx, nothing leaked; ids refused (422), free text stored exactly as sent; tables, other cases and the audit chain (2,726 rows) intact. Found on the way: a NUL in a note would have been a 500 | below; `make k8s-st6` |
 | ST7 | One client floods against its limit | **limit: pass** (excess gets 429, held to ≤50/s). **Isolation: not shown on a laptop** (others' p95 +30% and +61% vs allowed traffic, within run-to-run noise); rerun on separate machines in week 5 | below; `make st7` |
 | ST8 | Edit an audit row by hand | **pass**: verify names the edited row | `docs/results/alerts.md` |
 | ST9 | Swap the model file | **pass**, compose and cluster | `docs/results/promotion.md` |
 | ST10 | CI scan | **pass** (laptop and CI, 9 Nov): no secrets in 80 commits, no known vulnerabilities in our pins, no unwaived HIGH/CRITICAL in config or images. First run found 4 HIGH CVEs in every image and 4 HIGH settings; fixed or waived with reasons. Cluster passwords: none left in git in the clear, none of the old dev ones work (9 of 9 checks) | `docs/supply-chain.md`, `docs/secrets.md`; `make scan`, `make k8s-secrets-check` |
-| ST11 | Raw user ids in logs and stored rows | pending (week 5) | |
-| ST12 | Replayed and old requests | pending (week 5) | |
-| ST13 | Label writes by the wrong service account | pending (week 5) | |
+| ST11 | Raw user ids in logs and stored rows | **pass** (cluster, 10 Nov): after a 500-payment replay, 0 raw or raw-shaped user ids in Cassandra's three tables, cases, the audit log, the three payment topics, the SIEM and every container's logs; every stored id is a pseudonym. Before: raw ids in all of them except the audit log, SIEM and logs | below; `make k8s-st11`; `docs/privacy.md` |
+| ST12 | Replayed and old requests | **pass** (cluster, 10 Nov): the same flagged payment twice gave one answer, 1 history row, 1 case, 1 audit row, and the second counted as a duplicate; a token issued 10 min ago got 401 with nothing in txn.raw, one from 1 min ago 200 | below; `make k8s-st12`; `docs/ingest.md` "Replays" |
+| ST13 | Label writes by the wrong service account | **pass** (cluster, 10 Nov): no login and all six other Redpanda users were refused writing `labels`; only `label-sim` could, and it was refused on `txn.raw` and `model.events` | `make k8s-kafka-check` (29 of 29); `docs/kafka.md` |
 | ST14 | Forced drift alarms | pending (week 5, with Manisha) | |
 
 ## ST1: bad tokens (k3d cluster, 4 Nov)
@@ -196,6 +196,95 @@ kept reading, the feature job read all 4,000 payments sent since its restart, sc
 promotion, and no service logged a login or permission error.
 ST1 (1,000 of 1,000 refused; its `txn.raw` count now runs through `scripts/rpk.sh` as `admin`),
 ST4's network paths (unchanged) and ST2 (60 of 60) still passed afterwards.
+
+## ST11: personal data (k3d cluster, 10 Nov; `make k8s-st11`)
+
+Before week 5 the card's proxy id (e.g. `9500|204.0|98.0`) was stored as sent: in every message of
+`txn.raw`, `txn.scored` and `dlq.txn`, as the key of the three Cassandra tables, and in
+`cases.user_id`. Now ingest replaces it with an HMAC-SHA256 pseudonym before anything is stored
+(`docs/privacy.md`), and `make k8s-reset-data` removed the copies earlier runs had left.
+
+**Result:** after replaying 500 payments (421 user ids), ST11 found none of those raw ids and
+nothing raw-shaped in Cassandra (`txn_by_user`, `features_by_txn`, `user_features`), Postgres
+(`cases`, the audit log's details), Redpanda (every message in the three payment topics), the
+SIEM's events, or the logs of any container; and every stored user id has the pseudonym's shape.
+
+**Nothing else changed:** a 2,000-payment replay afterwards gave 840 cold starts against 837
+before the reset (the backfilled history, now pseudonymized, matches what ingest writes), the same
+decisions (1,969 / 6 / 25), and the Kafka permissions check passed again on the recreated topics
+(19 of 19).
+
+**Found on the way:** the first ST11 run was refused by Cassandra (`READ_TOO_MANY_TOMBSTONES`).
+The backfill stores each missing e-mail, device or product as an empty cell, which Cassandra
+keeps as a tombstone, and one unpaged read over the whole history passed its 100,000 limit. ST11
+now reads in pages. Writing missing values as "unset" instead would avoid the tombstones (and a
+little work on every history read); planned with the next backfill, on the VM.
+
+**Limit:** the payment's attributes (`card1`, `addr1`, ...) are model features and stay in the
+payment topics, readable by alert-svc and the feature job only (`docs/privacy.md`).
+
+## ST5: fuzzing the contract (k3d cluster, 10 Nov; `make k8s-st5`)
+
+Schemathesis 4.32.7 against `docs/openapi.yaml` through Kong: payments as `load-test` and as
+merchant-1, case status as `case-mgmt` (the write-back is left out: fuzzed ids could resolve real
+cases; ST6 covers it). Pass rule: no 5xx.
+
+| Run | Cases | Result | What it found |
+|---|---:|---|---|
+| 1 | 0 | could not start | the contract file itself was wrong: `exclusiveMinimum: 0` is OpenAPI 3.1, the file says 3.0.3. Fixed (`minimum: 0, exclusiveMinimum: true`) |
+| 2 | 1,312 | **2 failures (500)** | `"D15": "AAA"`: text in a number attr. ingest and scoring took any text or number for any attr, and the model's encoder failed on `float('AAA')`. Root cause: the attr rules lived in three places that disagreed (the contract had names only) |
+| 3 | 2,240 | passed, but | a fuzzed `ts` of `0387-08-26T14:46:05-21:11` had passed ingest (Python accepts offsets to 23:59) and the Spark feature job, whose strict cast fails beyond Java's 18:00, failed its batch and crash-looped retrying it |
+| 4 | **2,240** | **pass: no 5xx** | after both fixes |
+
+**The fixes** (`docs/ingest.md`, "Input"): `features/schema.yaml` now types every attr and bounds
+the payment time; `features/contract.py` enforces it in ingest and in scoring (422 and a DLQ copy
+otherwise); ingest stores `ts` in UTC; every service's 422 lists the problem without echoing the
+value (FastAPI's own answer failed with a 500 on `NaN`); a scoring failure after the payment is
+recorded is a 503 "retry with the same txn_id", not a 500; and the Spark job reads times with
+`try_to_timestamp`, counting what it can't read (`outcome="unreadable"`) instead of stopping.
+Tests check the OpenAPI file, the model's categorical features and all three data splits against
+the contract. `make spark-smoke` sent four bad messages through the real query among 10,000 good
+ones: 10,000 of 10,000 equal to training's features, 4 of 4 counted unreadable, none written.
+
+**Afterwards:** the feature job resumed from its checkpoint and counted 106 unreadable messages;
+reading `txn.raw` (8,571 messages) found exactly 106 with an offset beyond 18:00, all from the
+fuzzer's runs before the time rule.
+
+## ST6: injection strings (k3d cluster, 10 Nov; `make k8s-st6`)
+
+Ten strings (SQL and CQL, a JSON operator, path traversal, a forged log line, template and lookup
+strings, HTML, a NUL character) plus 5,000 characters of text, in every text field:
+
+| Where | Requests | Answer |
+|---|---:|---|
+| payment `txn_id`, `user_id` | 20 | 422 every time (ids are id characters only) |
+| payment channel, e-mails, device | 10 | 200, and Cassandra holds exactly what was sent |
+| a text attr over 256 characters | 1 | 422 |
+| the case system's write-back (note, external_ref), on a case of the test's own | 2 | NUL refused (422); the rest stored exactly, as an analyst reads it and in the audit row |
+| case routes' path parameters | 20 | 422 or 404; 400 from Kong itself for an encoded slash or NUL |
+| an analyst's resolve note | 10 | 404 (no such case) or 422 (NUL) |
+
+No answer was a 5xx, and none held a stack trace, SQL or CQL text. The Postgres tables were all
+still there, no other case changed, the SIEM's page showed the `<script>` as text, no forged line
+appeared in ingest's or alert-svc's logs, and `make k8s-verify-audit` found the chain intact
+(2,726 rows). **Found while writing it:** Postgres text can't hold a NUL, so a note with one would
+have been a 500; notes now refuse it (422).
+
+## ST12: replays (k3d cluster, 10 Nov; `make k8s-st12`)
+
+| Check | Expected | Got |
+|---|---|---|
+| the same flagged payment twice: answers | equal | equal |
+| history rows in Cassandra | 1 | 1 |
+| cases | 1 | 1 |
+| `case_opened` audit rows | 1 | 1 |
+| the feature job | the second as a duplicate | 1 duplicate |
+| a token issued 10 minutes ago (real key, so Kong accepts it) | 401, nothing stored | 401, 0 new in `txn.raw` |
+| a token issued 1 minute ago | 200 | 200 |
+
+Payments now need a token issued in the last 5 minutes (`docs/ingest.md`, "Replays"); inside that
+window `txn_id` makes a resend harmless. `txn.raw` keeps both copies (it is a log; every reader is
+idempotent).
 
 ## ST3: mTLS with Linkerd (k3d cluster, 8 Nov)
 

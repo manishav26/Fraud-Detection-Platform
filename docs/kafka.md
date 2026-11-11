@@ -19,10 +19,11 @@ what it needs. Anything not allowed is refused.
 | `feature-job` | read `txn.raw` (and the test topics `txn.parity`, `txn.bench`), with Spark's own group names (prefix `spark-kafka-source`) | the feature job, Spark or Python |
 | `model-admin` | write `model.events`: **the only user that may publish a promotion**, and model-admin-svc writes the audit row first | model-admin-svc |
 | `tools` | write `txn.parity`, `txn.bench` | laptop tools through the tunnel (`stream/load_raw.py` for the Spark runs) |
+| `label-sim` | write `labels`: **the only user that may write fraud answers** (threat 10, ST13) | Manisha's label simulator, when it runs on the cluster (Secret `kafka-label-sim`) |
 | `admin` | everything: topics, users, permissions | `rpk` inside the Redpanda pod only (`scripts/rpk.sh`) |
 
 Producers that use idempotence (ingest, model-admin) also have `idempotent_write` on the cluster.
-Users for Manisha's label and drift jobs are added when those run on the cluster.
+A user for Manisha's drift job (reading `labels` and `txn.scored`) is added when it runs on the cluster.
 
 ## How it works
 

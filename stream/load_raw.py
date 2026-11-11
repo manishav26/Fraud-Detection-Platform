@@ -19,6 +19,7 @@ from aiokafka import AIOKafkaProducer
 
 from kafka_login import aiokafka_options
 from load.replay import attr_columns, load_rows, to_request
+from pseudonym import pseudonym
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,6 +36,8 @@ async def send(topic, rows, prefix, bootstrap):
         for row in rows.to_dict("records"):
             msg = to_request(row, attrs)
             msg["txn_id"] = prefix + msg["txn_id"]
+            # what ingest would have written: this tool skips ingest (docs/privacy.md)
+            msg["user_id"] = pseudonym(msg["user_id"])
             pending.append(await producer.send(topic, msg, key=msg["user_id"].encode()))
             if len(pending) >= 5000:
                 await asyncio.gather(*pending)

@@ -12,6 +12,14 @@ cd "$(dirname "$0")/.."
 
 NS=fraud
 MODE=${1:-all}
+# Which Kustomize overlay: base (the laptop: one Cassandra node) or vm (the measurement VM: three;
+# docs/vm.md). Cassandra's copies (replication factor) follow it.
+OVERLAY=${OVERLAY:-base}
+case "$OVERLAY" in
+  base) CASSANDRA_RF=1 ;;
+  vm) CASSANDRA_RF=3 ;;
+  *) echo "OVERLAY must be base or vm" >&2; exit 1 ;;
+esac
 # Compose and the cluster together run this laptop out of memory and stall Docker
 if [ -n "$(docker compose ps -q 2>/dev/null)" ]; then
   echo "Compose is running. Stop it first: make down" >&2
@@ -176,6 +184,10 @@ secret kafka-scoring KAFKA_USER=scoring "KAFKA_PASSWORD=$REDPANDA_SCORING_PASSWO
 secret kafka-alert-svc KAFKA_USER=alert-svc "KAFKA_PASSWORD=$REDPANDA_ALERTS_PASSWORD"
 secret kafka-feature-job KAFKA_USER=feature-job "KAFKA_PASSWORD=$REDPANDA_FEATURES_PASSWORD"
 secret kafka-model-admin KAFKA_USER=model-admin "KAFKA_PASSWORD=$REDPANDA_MODEL_ADMIN_PASSWORD"
+# For Manisha's label simulator when it runs on the cluster: write labels only (ST13)
+secret kafka-label-sim KAFKA_USER=label-sim "KAFKA_PASSWORD=$REDPANDA_LABEL_SIM_PASSWORD"
+# The pseudonym key: only ingest turns user ids into pseudonyms (docs/privacy.md)
+secret pseudonym-key "PSEUDONYM_KEY=$PSEUDONYM_KEY"
 # No pod uses this one: scripts/rpk.sh reads it to run rpk as the superuser
 secret redpanda-admin "REDPANDA_ADMIN_PASSWORD=$REDPANDA_ADMIN_PASSWORD"
 
@@ -188,7 +200,7 @@ fi
 echo "3/5 Linkerd (if missing), then apply the Kustomize base"
 ./scripts/k8s_linkerd.sh
 # Pods whose YAML changed restart by themselves; a changed config map alone restarts nothing
-kubectl apply -k deploy/k8s/base
+kubectl apply -k "deploy/k8s/$OVERLAY"
 # `kubectl apply` never deletes what a manifest no longer has. Left over from earlier versions:
 # the ingest-svc Service, replaced by ingest-pods in week 4 (Kong reaches the pods directly)
 kubectl -n "$NS" delete service ingest-svc --ignore-not-found
@@ -221,12 +233,14 @@ RPK=./scripts/rpk.sh ./scripts/create_topics.sh
 # refuses until logins are on; they retry meanwhile (new ingest pods stay not ready, so the old
 # ones keep serving). Users, then permissions, then logins on (docs/kafka.md).
 ./scripts/kafka_security.sh
-kubectl -n "$NS" rollout status statefulset/cassandra --timeout=300s
+# Three nodes join one after another, about a minute and a half each (OVERLAY=vm)
+kubectl -n "$NS" rollout status statefulset/cassandra --timeout=600s
 kubectl -n "$NS" rollout status statefulset/postgres --timeout=180s
 kubectl -n "$NS" rollout status statefulset/objectstore --timeout=180s
 # Also sets both Cassandra logins to the passwords from the file (from the previous ones if rotating)
-CQLSH="kubectl -n $NS exec -i cassandra-0 -- cqlsh" \
-  PREVIOUS_CASSANDRA_ADMIN_PASSWORD="$PREVIOUS_CASSANDRA_ADMIN_PASSWORD" ./scripts/create_schema.sh
+CQLSH="kubectl -n $NS exec -i cassandra-0 -- cqlsh" NODETOOL="kubectl -n $NS exec -i cassandra-0 -- nodetool" \
+  CASSANDRA_RF="$CASSANDRA_RF" PREVIOUS_CASSANDRA_ADMIN_PASSWORD="$PREVIOUS_CASSANDRA_ADMIN_PASSWORD" \
+  ./scripts/create_schema.sh
 # No pod uses this one; kept so the next rotation knows the admin's current password
 secret cassandra-admin-credentials "CASSANDRA_ADMIN_PASSWORD=$CASSANDRA_ADMIN_PASSWORD"
 PSQL="kubectl -n $NS exec -i postgres-0 -- psql" ./scripts/create_db_schema.sh

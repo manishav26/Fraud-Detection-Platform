@@ -56,10 +56,14 @@ Two differences explain it:
    flags. Each makes approval come sooner.
 
 **What it means:** D3 is built as specified and stops every approval after 5 flags, but on the
-platform it stops about half of the probing attacks, not the 82.5% E6 measured. Options, to agree
-with Manisha (model side): fewer flags before freezing (2 or 3; E6's false-positive cost would need
-measuring again), or not letting a card's recently flagged payments make its e-mail and device
-"familiar" (a feature change, so training would change too). Not changed before Gate 3 without her.
+platform it stops about half of the probing attacks, not the 82.5% E6 measured. The options were
+fewer flags before freezing (2 or 3; E6's false-positive cost would need measuring again), or not
+letting a card's flagged payments make its e-mail and device "familiar" (a feature change, so
+training would change too).
+
+**Decision (Manisha, 10 Nov; `docs/results/e6.md`, "Live check"):** D3 stays as built, and this is
+reported as a finding. The fix she names, letting only approved payments make an e-mail or device
+familiar, changes training, so it is future work after the model is locked.
 
 ## Notes
 

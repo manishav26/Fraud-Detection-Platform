@@ -1,0 +1,9 @@
+{
+  "format_version": 1,
+  "schemathesis_version": "4.32.7",
+  "schema_location": "file:///Users/urmishah/Documents/Fall2026/CMPE272/Fraud-Detection-Platform/docs/openapi.yaml",
+  "base_url": "http://localhost:8080",
+  "created_at": "2026-11-09T23:44:16.444232+00:00",
+  "next_run_id": 9,
+  "auth_identities": {}
+}

@@ -4,6 +4,37 @@ Design: `docs/k8s.md` ("Scale and resilience"). k3d cluster, 3 nodes on one lapt
 Each test: `make k8s-resilience TEST=...` (`scripts/resilience_test.sh`), real payments through Kong,
 each test on its own rows. Raw output: `data/resilience/<test>/` (not in git).
 
+**Note (10 Nov):** these runs were made before Linkerd was added (also 8 Nov; the HPA's 2 to 3
+copies below show it still worked then). From Linkerd until 10 Nov the
+HPA couldn't scale at all: every scoring pod gained a `linkerd-proxy` container with no CPU
+request, the HPA's pod-level CPU metric needs a request for every container, and it reported
+`cpu: <unknown>` ("missing request for cpu in container linkerd-proxy"), keeping 2 copies. Found
+while explaining a replay's degraded answers; fixed by scaling on the scoring container's own CPU
+(`ContainerResource`) and giving every proxy requests (`docs/k8s.md`, `docs/mtls.md`). Week 5's
+scaling test measures it again, on the VM.
+
+## HPA after the fix (10 Nov, `make k8s-resilience TEST=scale`)
+
+With the HPA on the scoring container's CPU and every proxy given requests:
+
+| Check | Result |
+|---|---|
+| HPA status | `ScalingActive True` ("ValidMetricFound ... cpu container resource utilization"); `cpu: 1%/60%` at rest, where it had read `<unknown>` since Linkerd |
+| proxy resources | 10m CPU, 20 MiB requested, 128 MiB limit on both scoring pods; under load the proxies used 6-14 MiB, 0 restarts |
+| load | 80/s asked, **37.9/s reached** (28,800 in 759 s), every one answered 200 |
+| scoring CPU (Prometheus, per pod, 1 min rate) | mostly 40-58% of the 500m request; single pods spiked to 62-68% for 1-1.5 min in all, never both at once |
+| copies | **stayed at 2**: correct, since the HPA scales on the average across pods, which never reached 60% |
+
+So the HPA now works and decides correctly; this laptop just can't send enough to need a third copy
+(the gateway path tops out below scoring's capacity, as the runs below found too). An actual scale-up
+is measured in week 5's scaling test on the VM.
+
+Also seen in this run: 2 payments got the new 503 "recorded but not scored: retry" (scoring didn't
+answer in 5 s at 02:17:46-47, the busiest minute) and both retries got 200; the scoring breakers
+opened 12 and 14 times (Cassandra missing its 150 ms read limit while the laptop carried everything),
+so 2,649 payments (9%) were scored without history; and 4 decisions failed to reach `txn.scored`
+(`ingest_scored_publish_failures_total`), the accepted risk in `docs/ingest.md`.
+
 ## Summary
 
 Final runs, with both fixes below in place:

@@ -37,6 +37,7 @@ makes it easy to poke at.
 | `REDPANDA_ADMIN_PASSWORD` | Redpanda superuser `admin` (week 5) | `rpk` in the Redpanda pod only (`scripts/rpk.sh`) |
 | `REDPANDA_INGEST_PASSWORD`, `_SCORING_`, `_ALERTS_`, `_FEATURES_`, `_MODEL_ADMIN_` | one Redpanda user per workload | that workload, through its `kafka-<name>` Secret (`docs/kafka.md`) |
 | `REDPANDA_TOOLS_PASSWORD` | Redpanda user `tools` | laptop tools through the tunnel, via `scripts/k8s_secrets.sh run` |
+| `PSEUDONYM_KEY` | HMAC key for user id pseudonyms (week 5) | ingest (Secret `pseudonym-key`); the backfill and other laptop tools that write history (`docs/privacy.md`) |
 
 The token issuer's signing key and the clients' secrets are separate: `make keys` generates them
 into `keys/`, which isn't in git (`docs/access.md`). The promotion key stays on the laptop

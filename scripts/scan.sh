@@ -11,6 +11,8 @@ GITLEAKS=zricethezav/gitleaks:v8.30.1
 TRIVY=aquasec/trivy:0.76.1
 PYTHON_IMAGE=python:3.11-slim   # the same base as our services
 PIP_AUDIT=2.10.1
+PYYAML=6.0.3   # as in requirements-dev.txt
+KUSTOMIZE=registry.k8s.io/kustomize/kustomize:v5.8.1   # the version kubectl 1.36.1 builds with
 IMAGES=(token-issuer ingest-svc scoring-svc mlflow alert-svc model-admin-svc siem-mock feature-job)
 CACHE="${TRIVY_CACHE:-$HOME/.cache/trivy}"   # its vulnerability database, kept between runs
 mkdir -p "$CACHE"
@@ -44,9 +46,35 @@ deps() {   # our pinned versions against known vulnerabilities (PyPI's advisory 
 
 trivy() { docker run --rm -v "$CACHE:/root/.cache/trivy" "$@"; }
 
-config() {   # Dockerfiles, Kubernetes YAML, compose: risky settings
-  trivy -v "$PWD:/repo" "$TRIVY" config --severity HIGH,CRITICAL --exit-code 1 \
-    --ignorefile /repo/.trivyignore.yaml /repo
+overlay_py() {   # scripts/overlay_manifests.py, with PyYAML, as this user (so it can delete the output)
+  docker run -i --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/repo:ro" "$@" "$PYTHON_IMAGE" sh -c '
+    pip install -q --disable-pip-version-check --target /tmp/py "pyyaml==$0" 2>/dev/null || exit 2
+    PYTHONPATH=/tmp/py python /repo/scripts/overlay_manifests.py "$@"' "$PYYAML" "${OVERLAY_ARGS[@]}"
+}
+
+config() {   # Dockerfiles, Kubernetes YAML, compose: risky settings, in what is really deployed
+  local status=0 out skip=() overlay patch
+  # 1. Every file as it is, except overlay patches: those are fragments merged into the base
+  #    before anything runs, so on their own they lack the base's settings.
+  OVERLAY_ARGS=(patches)
+  out=$(overlay_py) || { echo "could not read the overlays' patch files" >&2; return 1; }
+  for patch in $out; do skip+=(--skip-files "$patch"); echo "(patch, read merged below: $patch)"; done
+  trivy -v "$PWD:/repo:ro" "$TRIVY" config --severity HIGH,CRITICAL --exit-code 1 \
+    --ignorefile /repo/.trivyignore.yaml "${skip[@]}" /repo || status=1
+  # 2. Each overlay as kustomize builds it, one file per resource: merged/<overlay>/<Kind>-<name>.yaml
+  OVERLAY_ARGS=(overlays)
+  out=$(overlay_py) || { echo "could not list the overlays" >&2; return 1; }
+  MERGED=$(mktemp -d)
+  for overlay in $out; do
+    echo "-- $overlay, merged"
+    OVERLAY_ARGS=(split "/merged/merged/$(basename "$overlay")")
+    docker run --rm -v "$PWD:/repo:ro" "$KUSTOMIZE" build "/repo/$overlay" \
+      | overlay_py -v "$MERGED:/merged" || { status=1; continue; }
+  done
+  trivy -v "$PWD:/repo:ro" -v "$MERGED:/merged:ro" "$TRIVY" config --severity HIGH,CRITICAL \
+    --exit-code 1 --ignorefile /repo/.trivyignore.yaml /merged || status=1
+  rm -rf "$MERGED"
+  return $status
 }
 
 images() {   # what is really installed in our images: OS packages and Python packages

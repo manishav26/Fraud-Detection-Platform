@@ -26,6 +26,7 @@ import pandas as pd
 from features.history import HISTORY_FEATURES, NOVELTY_OF, add_history, history_for_one
 from features.proxy_id import add_proxy_id
 from load.replay import START
+from pseudonym import pseudonym
 
 ROOT = Path(__file__).resolve().parents[2]
 PROCESSED = ROOT / "data" / "processed"
@@ -62,7 +63,7 @@ def online_features(rows, store):
     out = []
     for r in rows.itertuples(index=False):
         ts = START + timedelta(seconds=int(r.TransactionDT))
-        past = store.past(r.uid, ts)
+        past = store.past(pseudonym(r.uid), ts)   # stored under its pseudonym (docs/privacy.md)
         values = {c: plain(getattr(r, c)) for c in NOVELTY_OF}
         out.append(history_for_one(past, ts.timestamp(), float(r.TransactionAmt), values))
     return pd.DataFrame(out, index=rows.index)[HISTORY_FEATURES]

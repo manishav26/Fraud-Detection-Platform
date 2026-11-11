@@ -1,7 +1,12 @@
 # Scale and resilience (week 4, step 2). Design and results: docs/k8s.md, docs/results/scaling.md
 #
-# HPA: scoring-svc runs 2 to 8 copies, aiming for 60% of each pod's CPU request (500m), measured by
-# k3s's metrics-server. Up quickly, down slowly, so a short burst doesn't make copies come and go.
+# HPA: scoring-svc runs 2 to 8 copies, aiming for 60% of the scoring container's CPU request
+# (500m), measured by k3s's metrics-server. Up quickly, down slowly, so a short burst doesn't make
+# copies come and go.
+# ContainerResource, not Resource: a Resource metric adds up every container in the pod, and the
+# Linkerd proxy Linkerd injects had no CPU request, so from 8 Nov (mTLS) the HPA couldn't compute
+# a value at all ("missing request for cpu in container linkerd-proxy") and stayed at 2 copies.
+# Scaling on the scoring container alone measures the work that should drive it (the model).
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -11,9 +16,10 @@ spec:
   minReplicas: 2     # never one: a single pod restarting would stop all scoring
   maxReplicas: 8     # about 1.8 GB of memory at 8; the laptop's limit, not the platform's
   metrics:
-    - type: Resource
-      resource:
+    - type: ContainerResource
+      containerResource:
         name: cpu
+        container: scoring-svc
         target: {type: Utilization, averageUtilization: 60}
   behavior:
     scaleUp:

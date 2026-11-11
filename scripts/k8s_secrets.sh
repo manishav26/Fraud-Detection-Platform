@@ -31,6 +31,8 @@ SECRET_NAMES=(
   REDPANDA_FEATURES_PASSWORD     # `feature-job`
   REDPANDA_MODEL_ADMIN_PASSWORD  # `model-admin`
   REDPANDA_TOOLS_PASSWORD        # `tools`: laptop tools through the tunnel (stream/load_raw.py)
+  REDPANDA_LABEL_SIM_PASSWORD    # `label-sim`: the only writer of labels (Manisha's label simulator)
+  PSEUDONYM_KEY                # HMAC key for user id pseudonyms: ingest, backfill (docs/privacy.md)
 )
 # sops on macOS looks in ~/Library/Application Support by default; we keep the key here instead
 export SOPS_AGE_KEY_FILE="${SOPS_AGE_KEY_FILE:-$HOME/.config/sops/age/keys.txt}"

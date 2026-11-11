@@ -113,12 +113,18 @@ def main():
 
     leaks = []
     with httpx.Client(base_url=args.url, timeout=15) as client:
-        r = client.post("/token", json=credentials(ATTACKER))
-        r.raise_for_status()
-        auth = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        token = {"value": None, "at": 0.0}
+
+        def auth():
+            # payments need a token under 5 minutes old (ingest's replay window): renew after 4
+            if time.monotonic() - token["at"] > 240:
+                r = client.post("/token", json=credentials(ATTACKER))
+                r.raise_for_status()
+                token.update(value=r.json()["access_token"], at=time.monotonic())
+            return {"Authorization": f"Bearer {token['value']}"}
 
         def send(req, extra=None):
-            r = client.post("/v1/transactions/score", json=req, headers={**auth, **(extra or {})})
+            r = client.post("/v1/transactions/score", json=req, headers={**auth(), **(extra or {})})
             r.raise_for_status()
             body = r.json()
             if set(body) != SHORT:

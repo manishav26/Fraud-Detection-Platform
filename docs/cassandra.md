@@ -52,7 +52,8 @@ looks new live. `make backfill` (`store/backfill.py`) loads days 1-109 of known 
   copies that is 2 for writes + 2 for reads > 3, so every read sees the latest write, and one
   node can be down. `ONE` is faster but a read may miss a just-written payment. Change it with
   `CASSANDRA_CONSISTENCY=ONE`.
-- **Replication 1 locally** (one node). On a 3-node cluster set `'datacenter1': 3`.
+- **Replication follows the cluster:** 1 copy on one node (compose, the laptop), 3 on the VM's 3
+  nodes ("Three nodes" below). `scripts/create_schema.sh` sets it on every run (`CASSANDRA_RF`).
 - **No TTL yet:** `n_prev_txns` and the novelty flags look at a user's whole history, and the
   dataset is only 6 months. A real bank would expire old rows (for example after 1 year).
 
@@ -77,3 +78,25 @@ everything. Now it checks a password and a permission for every statement.
   table, change the schema, or read the logins.
 - **Test:** `make k8s-st4-db` (`security/tests/st4_cassandra_logins.sh`). Dev passwords, like
   Postgres's; encrypted secrets are step 5.
+
+## Three nodes (week 5, the measurement VM)
+
+The consistency (ONE vs QUORUM) and failure tests need more than one copy of the data: with one
+node there is nothing to fail over to and no second copy to disagree with. The laptop can't hold
+three, so they run only on the VM (`docs/vm.md`): `OVERLAY=vm make k8s-up` applies
+`deploy/k8s/vm`, the base plus these changes.
+
+| Choice | Design | Why |
+|---|---|---|
+| Nodes | 3, started one at a time (`OrderedReady`) | Cassandra refuses to bootstrap two nodes at once |
+| Ready when | `nodetool statusbinary` says `running`, which is after the node has joined | the base's TCP check on 9042 is answered by the Linkerd proxy before Cassandra is up, so the next node could start too early |
+| One per machine | required anti-affinity across the k3d nodes (`make cluster AGENTS=3`) | "a node fails" is a whole k3d node stopping, and loses one copy, never two |
+| Finding each other | headless Service `cassandra-peers` (`cassandra-0.cassandra-peers...` as the seed); clients keep the `cassandra` Service | Cassandra's standard way of joining; the driver learns all three and routes each read to a node holding that card |
+| Copies | `fraud` and `system_auth` at 3 (`CASSANDRA_RF=3`), then `nodetool repair -full system_auth` | Cassandra keeps logins at 1 copy by default: losing that node would fail every login. `create_schema.sh` refuses more copies than nodes up |
+| Consistency | `LOCAL_QUORUM` (2 of 3) for scoring and, since week 5, the feature job (it used the driver's `LOCAL_ONE`) | every read sees the latest write, and one node can be down |
+| Drains | PodDisruptionBudget, at most 1 node | a drain never takes two copies |
+| Node to node | port 7000, mTLS through Linkerd (opaque), only Cassandra's own identity may call it; a NetworkPolicy rule cassandra -> cassandra | the platform's rule: every connection encrypted and both ends proven |
+
+Raising the copies of a keyspace that already holds data needs `nodetool repair -full fraud` once,
+so the existing rows reach the new replicas; on the VM the keyspace is created before any data.
+

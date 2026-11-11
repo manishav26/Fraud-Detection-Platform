@@ -4,7 +4,7 @@ Created by `make topics` (script: `scripts/create_topics.sh`). Running it again 
 
 | Topic | Partitions | Message key | What goes in it | Who writes / reads |
 |---|---|---|---|---|
-| `txn.raw` | 6 | `user_id` | Every valid payment, as received | ingest-svc writes; stream job reads |
+| `txn.raw` | 6 | `user_id` (a pseudonym, `docs/privacy.md`) | Every valid payment, as received except the user id, which ingest pseudonymizes | ingest-svc writes; stream job reads |
 | `txn.scored` | 6 | `user_id` | Payment plus score and decision | ingest-svc writes; alert-svc and monitoring read |
 | `labels` | 3 | `txn_id` | Fraud answers, released 14 simulated days late | label simulator writes; drift job reads |
 | `model.events` | 1, compacted | model name | Which model version is live | training/promotion writes; scoring-svc reads |

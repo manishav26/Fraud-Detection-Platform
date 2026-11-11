@@ -13,11 +13,17 @@ Health routes for Kubernetes' probes (week 4, step 2; docs/k8s.md), also never r
   /readyz    the service can do its job (`ready()`): readiness. 503 takes the pod out of the
              Service until it is ready again
 Neither is counted in the request metrics: probes every few seconds would drown real traffic.
+
+A request that doesn't match its route's model gets 422 listing where each problem is and what it
+is, never the value sent (week 5, ST5): FastAPI's own answer echoes every bad value back, which
+reflects the caller's input and fails as a 500 when the value is NaN (Python's JSON reader takes
+it, but it can't be written back out).
 """
 
 import time
 
 from fastapi import Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
@@ -32,11 +38,26 @@ LATENCY = Histogram("http_request_duration_seconds", "Time to answer a request",
 NOT_MEASURED = {"/metrics", "/healthz", "/readyz"}
 
 
+def validation_problems(exc):
+    """A RequestValidationError's problems: location, message and kind only, never the input."""
+    return [{"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]} for e in exc.errors()]
+
+
+def validation_answer(exc):
+    return JSONResponse(status_code=422, content={"detail": validation_problems(exc)})
+
+
 def instrument(app, service, before_scrape=None, ready=None):
     """before_scrape: optional function run before each /metrics read, to refresh values that
     are only known at that moment (for example which model is live).
     ready: optional function returning (ok, reason) for /readyz; default always ready. Keep it
     cheap and local (no calls to other services): it runs every few seconds."""
+
+    async def refuse(request, exc):
+        return validation_answer(exc)
+
+    # A service may replace this with its own (ingest also keeps a copy in dlq.txn)
+    app.add_exception_handler(RequestValidationError, refuse)
 
     @app.middleware("http")
     async def measure(request: Request, call_next):

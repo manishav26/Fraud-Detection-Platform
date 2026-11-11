@@ -1,0 +1,10 @@
+# The measurement VM's cluster (week 5; docs/vm.md, docs/cassandra.md): the same platform as
+# deploy/k8s/base, with Cassandra on 3 nodes for the consistency and failure tests. The laptop
+# can't hold 3, so it keeps the base (one node). Used by: OVERLAY=vm scripts/k8s_up.sh
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+  - cassandra-peers.yaml
+patches:
+  - path: cassandra-3-nodes.yaml

@@ -103,3 +103,28 @@ def test_sender_retries_503_and_refreshes_expired_token(tmp_path, monkeypatch):
     sender.write_csv(stats.rows, out)
     rows = list(csv.DictReader(out.open()))
     assert rows[0]["decision"] == "approve"
+
+
+def test_the_token_is_renewed_before_ingest_would_refuse_it():
+    """Payments need a token under 5 minutes old (ingest): renewed after 4, not on a 401."""
+    issued = []
+
+    def handler(request):
+        issued.append(1)
+        return httpx.Response(200, json={"access_token": f"t{len(issued)}"})
+
+    now = [0.0]
+
+    async def run():
+        async with httpx.AsyncClient(base_url="http://kong",
+                                     transport=httpx.MockTransport(handler)) as client:
+            token = sender.Token(client, CREDS, clock=lambda: now[0])
+            first = await token.current()
+            now[0] = 200
+            same = await token.current()
+            now[0] = 250
+            renewed = await token.current()
+            return first, same, renewed
+
+    assert asyncio.run(run()) == ("t1", "t1", "t2")
+    assert sender.FRESH_FOR < 300

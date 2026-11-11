@@ -59,6 +59,8 @@ CPU questions are answered on the cluster, where the demo runs.
 | `history_skipped_writes_total` | scoring | payments missing from history (gaps) |
 | `ingest_step_seconds{step}` | ingest | `publish_raw` (Redpanda) and `wait_scoring` |
 | `ingest_scored_publish_failures_total` | ingest | decisions that never reached `txn.scored`, so no case opened |
+| `ingest_scoring_failures_total{kind}` | ingest | payments recorded but not scored, answered 503 (kind: error_answer, timeout, connection, bad_answer; `docs/ingest.md`) |
+| `ingest_stale_tokens_total` | ingest | payments refused because the token was issued over 5 minutes ago, or unreadable (replays, ST12) |
 | `alerts_messages_total{outcome}` | alert-svc | `cases_opened`, `already_open`, `not_flagged`, `unreadable` |
 
 - **Route patterns, not paths:** `/cases/{case_id}`, so each case id doesn't create its own series.
