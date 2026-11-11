@@ -165,8 +165,11 @@ E_N = T_N / (N x T_1) (Chapter 1).
 
 **Design** (`make k8s-scaling`, `scripts/scaling_test.sh`, `load/scaling.py`): scoring held at
 exactly N copies (HPA min = max = N, put back afterwards); each run sends the same 18,000 real
-payments (rows 110,000-163,999, a new block per run) as fast as 64 in flight allow, so the
-platform sets the pace (a closed loop). T_N is the payments answered per second between the 10th
+payments (rows 110,000-163,999, a new block per run) as fast as the senders' in-flight limit
+allows, so the platform sets the pace (a closed loop). **Four sending processes** (each every
+4th row, 64 in flight each, `load.replay --shard`): one Python sender tops out near 150/s (the
+first VM ramp, `docs/results/ramp.md`), below what 2 or 4 copies may answer, which would make
+the efficiency measure the sender instead. T_N is the payments answered per second between the 10th
 and 90th percentile of answer times (no warm-up, no drain). Each run also records scoring's and
 Cassandra's p95 and the busiest pods: if T_4 stops growing while the scoring pods have CPU to
 spare, the limit is elsewhere (ingest's 2 copies, Kong, Cassandra or the sender), and the table

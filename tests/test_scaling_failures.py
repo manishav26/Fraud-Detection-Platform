@@ -34,6 +34,15 @@ def test_throughput_is_measured_in_the_steady_middle(tmp_path):
     assert t["rate"] == pytest.approx(100, rel=0.02) and t["p95_ms"] == 10
 
 
+def test_senders_add_up_on_one_clock(tmp_path):
+    # two senders, each answering 50/s for 100 s; the second started 0.5 s later
+    parts = []
+    for i, started in ((0, 1000.0), (1, 1000.5)):
+        write_run(tmp_path / f"run-{i}.csv", [(k / 50, "200", 10, False) for k in range(5000)])
+        parts.append((tmp_path / f"run-{i}.csv", started))
+    assert scaling.senders_throughput(parts)["rate"] == pytest.approx(100, rel=0.02)
+
+
 def test_efficiency_is_t_n_over_n_times_t_1():
     assert scaling.efficiency({1: 100, 2: 180, 4: 300}) == {1: 1.0, 2: 0.9, 4: 0.75}
     assert math.isnan(scaling.efficiency({2: 180})[2])   # no 1-copy run, no efficiency
@@ -43,7 +52,8 @@ def test_scaling_report_lists_copies_in_order(tmp_path):
     for n, rate in ((4, 300), (1, 100), (2, 180)):
         d = tmp_path / str(n)
         d.mkdir()
-        write_run(d / "run.csv", [(i / rate, "200", 20, False) for i in range(rate * 60)])
+        write_run(d / "run-0.csv", [(i / rate, "200", 20, False) for i in range(rate * 60)])
+        (d / "client-0.txt").write_text("Sent ...\nStarted sending at unix 1000.0\n")
         (d / "prometheus.json").write_text(json.dumps(
             {"score_route_p95": 0.015, "steps_p95": {"history_read": 0.006},
              "cpu_pod_peak": {"cassandra-0": 0.9, f"scoring-{n}": 1.0}}))

@@ -5,6 +5,7 @@
 #
 #   scripts/scaling_test.sh            1, 2 and 4 copies, 18,000 real payments each
 #   scripts/scaling_test.sh plan       just print each run's rows
+#   SENDERS=4 (default): sending processes per run, interleaved (load.replay --shard)
 #
 # Each run holds scoring at exactly N copies (HPA min = max = N; put back at the end, whatever
 # happens) and sends its payments as fast as CONCURRENCY in flight allow (a closed loop: the
@@ -18,7 +19,10 @@ URL=http://localhost:8080
 PY=${PYTHON:-python}
 COPIES=${COPIES:-1 2 4}
 COUNT=${COUNT:-18000}             # payments per run: fixed work, so a faster platform finishes sooner
-CONCURRENCY=${CONCURRENCY:-64}    # in flight: enough that the platform, not the sender, sets the pace
+CONCURRENCY=${CONCURRENCY:-64}    # in flight per sender: enough that the platform sets the pace
+# Sending processes, each with every SENDERS-th row (load.replay --shard): one Python sender tops
+# out near 150/s (the first VM ramp), below what 2 or 4 scoring copies may answer
+SENDERS=${SENDERS:-4}
 # This test's rows of stream.parquet (docs/results/ramp.md has the whole plan)
 FIRST_ROW=110000
 LAST_ROW=167240
@@ -36,6 +40,7 @@ offsets() {   # one line per run: <copies> <first row>
   fi
 }
 
+[[ "$SENDERS" =~ ^[1-9][0-9]*$ ]] || { echo "SENDERS must be 1 or more" >&2; exit 1; }
 PLAN=$(offsets)   # an assignment, so a refusal stops here
 if [ "${1:-}" = plan ]; then
   echo "$PLAN" | while read -r n row; do echo "$n copies: rows $row +$COUNT"; done
@@ -76,19 +81,36 @@ rm -rf "${OUT:?}"/*
 while read -r n row; do
   dir=$OUT/$n
   mkdir -p "$dir"
-  echo "== $n scoring copies: $COUNT payments from row $row, $CONCURRENCY in flight"
+  echo "== $n scoring copies: $COUNT payments from row $row, $SENDERS senders x $CONCURRENCY in flight"
   hold_at "$n"
   sleep 20   # new pods: let their first calls (connections, the model library) pass before measuring
-  "$PY" -m load.replay --speed 0 --offset "$row" --limit "$COUNT" --concurrency "$CONCURRENCY" \
-    --url "$URL" --out "$dir/run.csv" < /dev/null > "$dir/client.txt" 2>&1
-  [ "$(ready)" = "$n" ] || echo "warning: $(ready) copies ready at the end, not $n" | tee -a "$dir/client.txt"
-  started=$(sed -n 's/^Started sending at unix //p' "$dir/client.txt")
-  wall=$(sed -n 's/.* payments in \([0-9.]*\) s.*/\1/p' "$dir/client.txt")
-  end=$("$PY" -c "print(int(round($started + $wall)))")
+  pids=()
+  for i in $(seq 0 $(( SENDERS - 1 ))); do
+    "$PY" -m load.replay --speed 0 --offset "$row" --limit "$COUNT" --shard "$i/$SENDERS" \
+      --concurrency "$CONCURRENCY" --url "$URL" --out "$dir/run-$i.csv" \
+      < /dev/null > "$dir/client-$i.txt" 2>&1 &
+    pids+=($!)
+  done
+  for pid in "${pids[@]}"; do wait "$pid" || { echo "a sender failed: $dir/client-*.txt" >&2; exit 1; }; done
+  [ "$(ready)" = "$n" ] || echo "warning: $(ready) copies ready at the end, not $n" | tee -a "$dir/client-0.txt"
+  # The run's window on one clock: from the first sender's start to the last one's finish
+  window=$("$PY" - "$dir" <<'EOF2'
+import re, sys
+from pathlib import Path
+spans = []
+for f in Path(sys.argv[1]).glob("client-*.txt"):
+    t = f.read_text()
+    start = float(re.search(r"Started sending at unix ([\d.]+)", t).group(1))
+    spans.append((start, start + float(re.search(r"payments in ([\d.]+) s", t).group(1))))
+first, last = min(s for s, _ in spans), max(e for _, e in spans)
+print(max(30, int(last - first)), int(round(last)))
+EOF2
+)
+  read -r seconds end <<< "$window"
   sleep 10   # the last Prometheus samples of the run
-  "$PY" -m observability.snapshot --seconds "$("$PY" -c "print(max(30, int($wall)))")" --end "$end" \
+  "$PY" -m observability.snapshot --seconds "$seconds" --end "$end" \
     --json "$dir/prometheus.json" < /dev/null > "$dir/prometheus.md"
-  tail -3 "$dir/client.txt"
+  grep -h "^Sent\|^Latency" "$dir"/client-*.txt
 done <<< "$PLAN"
 
 "$PY" -m load.scaling report "$OUT" | tee "$OUT/summary.md"

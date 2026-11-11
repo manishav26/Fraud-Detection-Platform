@@ -15,15 +15,26 @@ from pathlib import Path
 
 import numpy as np
 
+from load.ramp import sender_parts
+
 STEADY = (0.1, 0.9)   # throughput between the 10th and 90th percentile of answer times: no warm-up, no drain
 
 
 def throughput(path):
     """Payments answered per second in the steady middle of a run, their latency, and errors."""
-    with open(path, newline="") as f:
-        rows = list(csv.DictReader(f))
-    ok = [(float(r["sent_s"]) + float(r["latency_ms"]) / 1000, float(r["latency_ms"]))
-          for r in rows if r["status"] == "200"]
+    return senders_throughput([(path, 0.0)])
+
+
+def senders_throughput(parts):
+    """throughput() over several senders at once: parts = [(run CSV, that sender's unix start)];
+    each answer is placed on one clock (start + sent_s + latency)."""
+    rows = []
+    for path, started in parts:
+        with open(path, newline="") as f:
+            rows += [(started, r) for r in csv.DictReader(f)]
+    ok = [(started + float(r["sent_s"]) + float(r["latency_ms"]) / 1000, float(r["latency_ms"]))
+          for started, r in rows if r["status"] == "200"]
+    rows = [r for _, r in rows]
     errors = sum(1 for r in rows if r["status"] == "error" or r["status"].startswith("5"))
     if len(ok) < 10:
         return {"rate": math.nan, "p50_ms": math.nan, "p95_ms": math.nan, "answered": len(ok),
@@ -46,10 +57,10 @@ def report(root):
     root = Path(root)
     runs = {}
     for folder in root.iterdir():
-        if folder.name.isdigit() and (folder / "run.csv").exists():
+        if folder.name.isdigit() and any(folder.glob("run*.csv")):
             prom_file = folder / "prometheus.json"
             prom = json.loads(prom_file.read_text()) if prom_file.exists() else {}
-            runs[int(folder.name)] = (throughput(folder / "run.csv"), prom)
+            runs[int(folder.name)] = (senders_throughput(sender_parts(folder)), prom)
     eff = efficiency({n: r["rate"] for n, (r, _) in runs.items()})
     out = [("| Scoring copies | Throughput T_N (/s) | E_N = T_N / (N x T_1) | p50 ms | p95 ms |"
            " 5xx | scoring /score p95 ms | Cassandra read p95 ms | busiest pods (cores) |"),
