@@ -35,7 +35,24 @@ QUERIES = {
     "cpu_node_peak": "max_over_time((sum by (node) (rate(container_cpu_usage_seconds_total{{id=\"/\"}}[1m])))[{w}:15s])",
     # The pods that used the most CPU at their busiest, to see what drives a node's peak
     "cpu_pod_peak": 'topk(5, max_over_time((sum by (pod) (rate(container_cpu_usage_seconds_total{{namespace="fraud", container!=""}}[1m])))[{w}:15s]))',
+    # Kong's own share of each request and the time upstream (ingest), in ms (Kong 3.x plugin,
+    # latency_metrics on); all Kong routes, which during a load run are almost all payments
+    "kong_p95": "histogram_quantile(0.95, sum by (le) (increase(kong_request_latency_ms_bucket[{w}])))",
+    "kong_own_p95": "histogram_quantile(0.95, sum by (le) (increase(kong_kong_latency_ms_bucket[{w}])))",
+    "kong_upstream_p95": "histogram_quantile(0.95, sum by (le) (increase(kong_upstream_latency_ms_bucket[{w}])))",
+    "ingest_steps_p95": "histogram_quantile(0.95, sum by (le, step) (increase(ingest_step_seconds_bucket[{w}])))",
+    # Feature job: txn.raw -> features written, and how many payments it handled
+    "freshness_p95": "histogram_quantile(0.95, sum by (le) (increase(feature_job_delay_seconds_bucket[{w}])))",
+    "feature_job_payments": "sum(increase(feature_job_payments_total[{w}]))",
 }
+
+# What a ramp step needs to exist before it starts (load/ramp.py checks): without one of these a
+# hop would show "–" instead of a number
+REQUIRED_METRICS = ("http_request_duration_seconds_bucket", "scoring_step_seconds_bucket",
+                    "ingest_step_seconds_bucket", "kong_request_latency_ms_bucket",
+                    "kong_kong_latency_ms_bucket", "kong_upstream_latency_ms_bucket",
+                    "feature_job_delay_seconds_bucket", "feature_job_payments_total",
+                    "scoring_decisions_total")
 
 
 def prometheus_query(url, end=None):
@@ -84,7 +101,22 @@ def collect(query, seconds):
         "steps_p95": by_label(r["steps_p95"], "step"),
         "cpu_node_peak": by_label(r["cpu_node_peak"], "node"),
         "cpu_pod_peak": by_label(r["cpu_pod_peak"], "pod"),
+        "kong_p95": one("kong_p95") / 1000,   # ms -> s, like everything else here
+        "kong_own_p95": one("kong_own_p95") / 1000,
+        "kong_upstream_p95": one("kong_upstream_p95") / 1000,
+        "ingest_steps_p95": by_label(r["ingest_steps_p95"], "step"),
+        "freshness_p95": one("freshness_p95"),
+        "feature_job_payments": one("feature_job_payments"),
     }
+
+
+def to_json(numbers):
+    """JSON with no data (NaN) as null, so other tools can read it."""
+    def clean(v):
+        if isinstance(v, dict):
+            return {k: clean(x) for k, x in v.items()}
+        return None if isinstance(v, float) and math.isnan(v) else v
+    return json.dumps(clean(numbers), indent=2)
 
 
 def ms(seconds):
@@ -124,6 +156,16 @@ def render(s):
             f"| scoring answers /score (queue + work) | {ms(s['score_route_p95'])} |"]
     out += [f"| scoring step: {k} | {ms(v)} |" for k, v in sorted(s["steps_p95"].items())]
 
+    out += ["", "| Gateway and feature job | Value |", "|---|---|",
+            f"| Kong, whole request (p95) | {ms(s['kong_p95'])} |",
+            f"| Kong itself (p95) | {ms(s['kong_own_p95'])} |",
+            f"| Kong waiting for ingest (p95) | {ms(s['kong_upstream_p95'])} |"]
+    out += [f"| ingest step: {k} (p95) | {ms(v)} |" for k, v in sorted(s["ingest_steps_p95"].items())]
+    fresh = s["freshness_p95"]
+    fresh_text = "–" if math.isnan(fresh) else f"{fresh:.1f} s"
+    out += [f"| feature job: txn.raw -> features written (p95) | {fresh_text} |",
+            f"| feature job: payments handled | {count(s['feature_job_payments'])} |"]
+
     if s["cpu_node_peak"]:
         out += ["", "| Node | Peak CPU (cores, 1-minute average) |", "|---|---|"]
         out += [f"| {node} | {v:.2f} |" for node, v in sorted(s["cpu_node_peak"].items())]
@@ -141,9 +183,14 @@ def main():
     window.add_argument("--minutes", type=int, default=10)
     window.add_argument("--seconds", type=int, help="an exact window, e.g. a load run's length")
     ap.add_argument("--end", help="end of the window (RFC 3339 or unix seconds); default now")
+    ap.add_argument("--json", help="also write the numbers here, for load/ramp.py")
     args = ap.parse_args()
     seconds = args.seconds or args.minutes * 60
-    print(render(collect(prometheus_query(args.url, args.end), seconds)))
+    numbers = collect(prometheus_query(args.url, args.end), seconds)
+    if args.json:
+        with open(args.json, "w") as f:
+            f.write(to_json(numbers))
+    print(render(numbers))
 
 
 if __name__ == "__main__":

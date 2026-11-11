@@ -53,6 +53,7 @@ class Stats:
         self.status, self.decisions, self.latency_ms = Counter(), Counter(), []
         self.retries, self.max_lag_s, self.rows, self.cold_starts = 0, 0.0, [], 0
         self.degraded, self.probes = 0, 0
+        self.started_at = None   # unix time of the first send (a ramp step's window starts here)
 
     def summary(self, wall_s):
         sent = sum(self.status.values())
@@ -64,6 +65,8 @@ class Stats:
                  f"Held by probe detection: {self.probes:,}",
                  f"Retries after 503: {self.retries}",
                  f"Furthest behind schedule: {self.max_lag_s:.2f} s"]
+        if self.started_at is not None:
+            lines.append(f"Started sending at unix {self.started_at:.3f}")
         if self.latency_ms:
             p50, p95, p99 = np.percentile(self.latency_ms, [50, 95, 99])
             lines.append(f"Latency ms: p50 {p50:.1f}  p95 {p95:.1f}  p99 {p99:.1f}")
@@ -97,7 +100,9 @@ async def send_one(client, token, req):
         return "error", {}, (time.perf_counter() - t0) * 1000, retries
 
 
-CSV_HEADER = ["txn_id", "user_id", "status", "decision", "score", "latency_ms", "extra"]
+# sent_s: when the payment was sent, in seconds from the run's start (so a part of a run can be
+# measured on its own, e.g. a ramp step's last minutes: scripts/ramp_test.sh)
+CSV_HEADER = ["txn_id", "user_id", "status", "decision", "score", "latency_ms", "extra", "sent_s"]
 
 
 def write_csv(rows, path):
@@ -117,7 +122,7 @@ async def run(schedule, url, concurrency=32, keep_rows=False, transport=None, cr
     # One request per user at a time, so a user's payments arrive in the order they happened.
     user_locks = defaultdict(asyncio.Lock)
 
-    async def task(req, extra):
+    async def task(req, extra, sent_s):
         try:
             async with user_locks[req["user_id"]]:
                 status, body, ms, retries = await send_one(client, token, req)
@@ -133,7 +138,7 @@ async def run(schedule, url, concurrency=32, keep_rows=False, transport=None, cr
             stats.probes += bool(body.get("probe"))
         if keep_rows:
             stats.rows.append([req["txn_id"], req["user_id"], status, body.get("decision"),
-                               body.get("score"), round(ms, 2), extra])
+                               body.get("score"), round(ms, 2), extra, round(sent_s, 3)])
 
     limits = httpx.Limits(max_connections=concurrency)
     async with httpx.AsyncClient(base_url=url, timeout=30, limits=limits,
@@ -142,13 +147,15 @@ async def run(schedule, url, concurrency=32, keep_rows=False, transport=None, cr
         await token.refresh()
         tasks = set()
         start = time.perf_counter()
+        stats.started_at = time.time()
         for offset, req, extra in schedule:
             wait = start + offset - time.perf_counter()
             if wait > 0:
                 await asyncio.sleep(wait)
             await in_flight.acquire()
-            stats.max_lag_s = max(stats.max_lag_s, time.perf_counter() - start - offset)
-            t = asyncio.create_task(task(req, extra))
+            sent_s = time.perf_counter() - start
+            stats.max_lag_s = max(stats.max_lag_s, sent_s - offset)
+            t = asyncio.create_task(task(req, extra, sent_s))
             tasks.add(t)
             t.add_done_callback(tasks.discard)
         await asyncio.gather(*tasks)
