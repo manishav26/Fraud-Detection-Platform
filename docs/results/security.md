@@ -110,6 +110,12 @@ merchant-2 payment was answered.
 - **Next:** rerun in week 5 with the load sent from a separate machine (the rented VM planned for
   the Cassandra tests), and more repeats. Until then ST7's isolation half is open, not passed.
 
+**Week 5 rerun (VM):** `make st7 URL=http://localhost:8080 ST7_SECONDS=60 ST7_REPEATS=4`: 60 s
+per run (600 of merchant-2's payments per p95 instead of 200) and 4 B/C pairs, alternating. The
+script now also prints how much the four identical B runs differ: a C-vs-B difference smaller than
+that spread is noise, not the flood. The senders run on the VM itself, which has cores to spare at
+these rates (the ramp shows how much), unlike the laptop. *(results to be filled in)*
+
 ## ST4: network isolation (k3d cluster, 8 Nov)
 
 Each source pod tries a TCP connection to another pod of every workload, on every port it listens
@@ -219,6 +225,9 @@ The backfill stores each missing e-mail, device or product as an empty cell, whi
 keeps as a tombstone, and one unpaged read over the whole history passed its 100,000 limit. ST11
 now reads in pages. Writing missing values as "unset" instead would avoid the tombstones (and a
 little work on every history read); planned with the next backfill, on the VM.
+**Fixed (11 Nov):** every writer (scoring, the backfill, the feature job) now leaves a missing
+value unset (`store/history.py`, `stream/sink.py`), so no new tombstones; the VM's data is
+reloaded with `make k8s-reset-data` to drop the old ones.
 
 **Limit:** the payment's attributes (`card1`, `addr1`, ...) are model features and stay in the
 payment topics, readable by alert-svc and the feature job only (`docs/privacy.md`).

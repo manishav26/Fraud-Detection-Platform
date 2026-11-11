@@ -2,6 +2,7 @@ import math
 from datetime import UTC, datetime
 
 import pandas as pd
+from cassandra.query import UNSET_VALUE
 
 from features.history import NOVELTY_OF
 from load.replay import to_ts
@@ -48,13 +49,13 @@ def test_unknown_users_are_skipped():
     assert df["uid"].map(is_known).all()
 
 
-def test_values_use_the_same_timeline_as_replay_and_null_for_missing():
+def test_values_use_the_same_timeline_as_replay_and_unset_for_missing():
     row = known_rows(past_payments()).iloc[1].to_dict()
     user, ts, txn_id, amount, email, device, product = to_values(row)
     assert ts == to_datetime(to_ts(86_460))
     assert ts == datetime(2017, 12, 2, 0, 1, tzinfo=UTC)
     assert txn_id == "2" and amount == 20.0 and user == row["uid"]
-    assert email is None and device == "mobile" and product == "W"
+    assert email is UNSET_VALUE and device == "mobile" and product == "W"   # unset: no tombstone
 
 
 def test_verify_finds_a_user_with_missing_rows():

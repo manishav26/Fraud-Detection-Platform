@@ -40,7 +40,11 @@ def to_time(t):
 
 
 def _value(v):
-    return None if v is None or (isinstance(v, float) and math.isnan(v)) else float(v)
+    """A feature for INSERT; a missing one (e.g. seconds since the last payment, on a user's first)
+    is left unset, not written as null: Cassandra keeps a null as a tombstone (store/history.py)."""
+    from cassandra.query import UNSET_VALUE  # lazily, like the rest of this module's driver use
+
+    return UNSET_VALUE if v is None or (isinstance(v, float) and math.isnan(v)) else float(v)
 
 
 def feature_params(txn_id, user_id, t, feats, written_at):
