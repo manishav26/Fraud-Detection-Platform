@@ -9,7 +9,7 @@ Manisha) run on one AWS VM instead, with the same k3d setup and the same scripts
 | Choice | Value | Why |
 |---|---|---|
 | Instance | m7i.2xlarge: 8 vCPU, 32 GiB, Intel, **on-demand** | the platform uses about 6 GB today; a 3-node Cassandra adds about 3.5 GB, the feature job 2 GB, plus the load generator; 4 scoring copies at once need the cores. Not spot: a spot VM can be taken away mid-test |
-| Region | us-west-2 (Oregon) | close; the usual price |
+| Region | us-east-2 (Ohio) | the account's region: it uses AWS's simplified console, which sets the region itself (Oregon was the first choice). Nothing here depends on the region; the load, Cassandra and scoring all run inside the VM |
 | OS | Ubuntu Server 24.04 LTS, x86_64 | `scripts/vm_setup.sh` installs the laptop's tool versions on it |
 | Disk | 100 GB gp3, encrypted | images, data and Cassandra; encryption at rest for the measurement runs (threat 8) |
 | Network | only SSH (22), only from your IP | everything else through SSH tunnels |
@@ -19,7 +19,12 @@ Manisha) run on one AWS VM instead, with the same k3d setup and the same scripts
 recipient), the promotion **private** key (promotions are signed on the laptop), and the repo's
 GitHub credentials (the VM gets the committed code from `scripts/vm_sync.sh`).
 
-## 1. AWS account, once (console, us-west-2)
+## 1. AWS account, once (console, us-east-2)
+
+Done on 11 Nov 2026. The account is on AWS's **Free plan** ($120 of credits, which cover the
+plan's roughly $25). If the launch (step 2) refuses m7i.2xlarge because of the plan, upgrade to
+the Paid plan (Billing and Cost Management); check on that page that unused credits carry over.
+After an upgrade, the budget alert below is what catches spending past the credits.
 
 1. **Budget:** Billing and Cost Management -> Budgets -> Create budget -> Cost budget, monthly,
    **$30**; alerts at 50%, 80% and 100% to your e-mail.
@@ -31,7 +36,10 @@ GitHub credentials (the VM gets the committed code from `scripts/vm_sync.sh`).
    ssh-keygen -t ed25519 -f ~/.ssh/fraud-vm -C fraud-vm
    ```
 4. **Security group** `fraud-vm`: inbound **SSH, port 22, source "My IP"** and nothing else;
-   outbound: all (to pull images and packages).
+   outbound: all (to pull images and packages). "My IP" is only the address you are on: from
+   another network (campus), add one more SSH rule with source "My IP" while there, and test
+   `ssh fraud-vm 'uname -a'` before the day you need it (some campus networks block port 22).
+   Never "Anywhere (0.0.0.0/0)".
 
 ## 2. Launch (Thursday morning)
 
@@ -155,8 +163,9 @@ That kubeconfig is the cluster's admin login: keep it at mode 600 and delete it 
 
 ## Not covered here
 
-- **The consistency and failure tests themselves** (ONE vs QUORUM, a node killed): their own
-  designs, on this VM, once the 3-node Cassandra is up.
+- **The consistency test** (ONE vs QUORUM): `docs/results/consistency.md`, run with
+  `make k8s-consistency` on this VM once the 3-node Cassandra is up.
+- **The failure tests** (a node killed): their own design.
 - **gen_keys on the VM:** with only the promotion public key there, `scripts/gen_keys.sh` keeps it
   (it used to make a new pair whenever the private key was missing, which would have replaced the
   laptop's public key and made every promotion fail).
