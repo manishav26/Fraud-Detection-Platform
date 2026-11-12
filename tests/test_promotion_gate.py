@@ -8,7 +8,7 @@ CURRENT = {"PR-AUC": 0.48, "p95 ms": 2.0, "flagged share": 0.012}
 
 
 def candidate(**changes):
-    return {"PR-AUC": 0.50, "p95 ms": 3.0, "flagged share": 0.015, **changes}
+    return {"PR-AUC": 0.50, "p95 ms": 2.2, "flagged share": 0.015, **changes}
 
 
 def failed(rows):
@@ -31,8 +31,14 @@ def test_worse_model_is_rejected():
 
 
 def test_too_slow_is_rejected_even_if_better():
-    passed, rows = check(candidate(**{"PR-AUC": 0.60, "p95 ms": 68.0}), CURRENT)
+    passed, rows = check(candidate(**{"PR-AUC": 0.60, "p95 ms": 2.5}), CURRENT)   # 1.25x
     assert not passed and failed(rows) == ["fast"]
+
+
+def test_speed_is_judged_against_the_live_model_on_the_same_machine():
+    """~11 ms for both models on a slow laptop is fine; it was the absolute 5 ms that failed it."""
+    passed, rows = check(candidate(**{"p95 ms": 11.08}), {**CURRENT, "p95 ms": 11.09})
+    assert passed and rows[1]["value"] == "11.08 ms vs 11.09 ms (1.00x)"
 
 
 def test_flagging_more_than_analysts_can_review_is_rejected():
@@ -41,8 +47,8 @@ def test_flagging_more_than_analysts_can_review_is_rejected():
 
 
 def test_exactly_on_the_limits_passes():
-    passed, _ = check(candidate(**{"PR-AUC": 0.49, "p95 ms": 5.0, "flagged share": 0.02}),
-                      CURRENT)
+    passed, _ = check(candidate(**{"PR-AUC": 0.49, "p95 ms": 2.4, "flagged share": 0.02}),
+                      CURRENT)   # exactly +0.01, 1.2x, 2%
     assert passed
 
 # The test days come from the candidate's own meta.json, so the gate checks both models never saw them

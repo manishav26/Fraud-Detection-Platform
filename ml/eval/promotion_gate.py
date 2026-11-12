@@ -1,11 +1,15 @@
 """Promotion gate: may a candidate model replace the live one?
 
-Both models are scored on the golden set, test days 92-109, which v1 never saw (trained on
-1-73, calibrated on 74-91). The candidate passes only if all three checks pass:
+Both models are scored on the candidate's own test days (its meta.json; 92-109 for v1). The
+candidate passes only if all four checks pass:
   1. better  PR-AUC at least MIN_GAIN (0.01) above the current model; smaller gains are
              within seed noise (E1), so not worth a swap
-  2. fast    score + reasons for one payment, p95 at most MAX_MS (5 ms), one thread
+  2. fast    score + reasons for one payment (p95, one thread) at most MAX_SLOWDOWN (1.2) times
+             the current model's, both timed in the same run on the same machine. It used to be
+             an absolute 5 ms, but the same code takes ~3 ms on one laptop and ~11 ms on another
+             (docs/results/model_admin.md), so that measured the machine running the gate
   3. safe    share of payments flagged (review + decline) within analyst capacity (2%)
+  4. unseen  neither model was trained or calibrated on the test days
 
 Run it before `make promote`. Exit code 0 = promote, 1 = keep the current model.
 
@@ -30,7 +34,7 @@ from ml.model import FraudModel
 from ml.train.calibrate import RESULTS, REVIEW_CAPACITY, TARGET, load_data
 
 MIN_GAIN = 0.01
-MAX_MS = 5.0
+MAX_SLOWDOWN = 1.2   # the candidate may be up to 20% slower than the live model, no more
 TIMING_SAMPLE = 500
 WARM_UP = 50
 
@@ -105,14 +109,17 @@ def measure(model, golden, sample=TIMING_SAMPLE, seed=0):
             "p95 ms": float(np.percentile(ms, 95))}
 
 
-def check(candidate, current, min_gain=MIN_GAIN, max_ms=MAX_MS, capacity=REVIEW_CAPACITY):
-    """Apply the three rules to two `measure` results. Returns (passed, table rows)."""
+def check(candidate, current, min_gain=MIN_GAIN, max_slowdown=MAX_SLOWDOWN, capacity=REVIEW_CAPACITY):
+    """Apply the three measured rules to two `measure` results (the fourth, `unseen`, is about
+    the days: see unseen()). Returns (passed, table rows)."""
     gain = candidate["PR-AUC"] - current["PR-AUC"]
+    slowdown = candidate["p95 ms"] / current["p95 ms"]
     rows = [
         {"check": "better", "value": f"{gain:+.4f} PR-AUC",
          "rule": f">= +{min_gain}", "passed": gain >= min_gain},
-        {"check": "fast", "value": f"{candidate['p95 ms']:.2f} ms",
-         "rule": f"<= {max_ms} ms", "passed": candidate["p95 ms"] <= max_ms},
+        {"check": "fast", "value": (f"{candidate['p95 ms']:.2f} ms vs {current['p95 ms']:.2f} ms "
+                                    f"({slowdown:.2f}x)"),
+         "rule": f"<= {max_slowdown}x current", "passed": slowdown <= max_slowdown},
         {"check": "safe", "value": f"{candidate['flagged share']:.2%} flagged",
          "rule": f"<= {capacity:.0%}", "passed": candidate["flagged share"] <= capacity},
     ]
@@ -153,7 +160,8 @@ def main():
         f.write("# Promotion gate\n\n")
         f.write(f"Test days {days[0]}-{days[1]} ({len(golden):,} payments). Rules: PR-AUC at "
                 f"least +{MIN_GAIN} over the current model, score + reasons p95 at most "
-                f"{MAX_MS} ms (one payment at a time, one thread), flagged share within "
+                f"{MAX_SLOWDOWN}x the current model's (one payment at a time, one thread, the "
+                f"same machine), flagged share within "
                 f"{REVIEW_CAPACITY:.0%}, test days unseen by both models.\n\n")
         f.write(f"**{verdict}**\n\n")
         f.write(models.to_markdown(index=False) + "\n\n")
