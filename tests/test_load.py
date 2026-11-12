@@ -103,6 +103,8 @@ def test_sender_retries_503_and_refreshes_expired_token(tmp_path, monkeypatch):
     sender.write_csv(stats.rows, out)
     rows = list(csv.DictReader(out.open()))
     assert rows[0]["decision"] == "approve"
+    assert float(rows[0]["sent_s"]) >= 0   # when it was sent, for measuring part of a run
+    assert rows[0]["degraded"] == "True"   # scored without history: the failure tests count these
 
 
 def test_the_token_is_renewed_before_ingest_would_refuse_it():

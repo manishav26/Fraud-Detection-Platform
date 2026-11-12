@@ -132,7 +132,7 @@ closed connection`). The first drain run never evicted an ingest pod, so it hadn
   error rate.
 
 **Fixes:**
-1. **Kong reaches ingest's pods directly:** a headless Service, `ingest-pods`, whose DNS name
+1. **Kong reaches ingest's pods directly** (replaced on 11 Nov: cause 3 below): a headless Service, `ingest-pods`, whose DNS name
    returns each ready pod. Kong balances across them and, within its 5 s DNS refresh, stops
    choosing a pod that is leaving. Compose has the same name as an alias.
 2. **Ingest waits 15 s before stopping** (was 5 s), longer than that refresh.
@@ -143,6 +143,38 @@ closed connection`). The first drain run never evicted an ingest pod, so it hadn
 
 With these, the same disruption (scoring, ingest and alert pods evicted from one node) gave
 **0 errors in 5,400**.
+
+## Error cause 3: Kong kept expired addresses for ingest (VM, 11 Nov)
+
+Fix 1 above was made before the mesh (Linkerd) existed, and stopped working with it.
+
+**Seen:** the first replay after each `make k8s-reset-data` (which replaces both ingest pods) got
+exactly 2 answers of 502, both among the first payments, answered in 7 and 13 ms; the long runs
+afterwards had none. Kong logged no error. The Linkerd proxy beside Kong logged the cause:
+`endpoint 10.42.0.13:8000 ... Connection refused` (and `10.42.1.18` after the second reset): the
+addresses of the ingest pods the reset had removed, not the running ones (`10.42.0.27`,
+`10.42.4.17`).
+
+**Why:** with `ingest-pods` headless, Kong looks the pods up in DNS itself and, as far as we
+can tell from its documented defaults, keeps serving an expired answer while it refreshes it in
+the background (`dns_stale_ttl`), so the "5 s" above didn't hold: minutes after the reset it
+still sent to the removed pods. And because Kong picked the pod, its Linkerd proxy only forwarded
+to that address (`forward{addr=...}` in the log) instead of balancing.
+
+**Fix:** Kong sends to a normal Service, `ingest-svc`, and its Linkerd proxy balances each
+request across the ready ingest pods, following Kubernetes' list as it changes. Cause 2 doesn't
+come back: the proxy balances requests, not connections, and drops a pod as soon as it leaves the
+ready list; ingest's 15 s pause covers the requests already in flight. Ingest to scoring already
+worked this way.
+
+**Checked (VM, 11 Nov), all after `make k8s-apply RESTART=kong`:**
+
+| Check | Before | After |
+|---|---|---|
+| Reset (both ingest pods replaced), then 2,000 payments | 2 of 2,000 got 502, twice | **0 of 2,000** (`{200: 2000}`, p95 30 ms) |
+| `rollout restart` of ingest **during** a 3,600-payment replay: both pods replaced one by one, each leaving mid-traffic | (cause 2 gave 16 errors when one ingest pod left) | **0 of 3,600** (no retries, p95 26 ms) |
+| Drain rerun (that node held only a scoring pod) | | 0 of 3,600 |
+| ST4 network paths, ST2 roles | | both pass, unchanged |
 
 ## Other observations
 
@@ -157,3 +189,78 @@ With these, the same disruption (scoring, ingest and alert pods evicted from one
 - **The Grafana copies panel** showed scoring dropping to 1 for a moment under 80/s, while
   Kubernetes had 3 ready the whole time: a busy pod answered Prometheus's read late. The panel
   now counts a pod that answered any read in the last 30 s.
+
+## Week 5: 1, 2 and 4 copies (on the VM)
+
+The plan: run 1, 2 and 4 scoring copies at the same load and compute the scaling efficiency
+E_N = T_N / (N x T_1) (Chapter 1).
+
+**Design** (`make k8s-scaling`, `scripts/scaling_test.sh`, `load/scaling.py`): scoring held at
+exactly N copies (HPA min = max = N, put back afterwards); each run sends the same 18,000 real
+payments (rows 110,000-163,999, a new block per run) as fast as the senders' in-flight limit
+allows, so the platform sets the pace (a closed loop). **Four sending processes** (each every
+4th row, 64 in flight each, `load.replay --shard`): one Python sender tops out near 150/s (the
+first VM ramp, `docs/results/ramp.md`), below what 2 or 4 copies may answer, which would make
+the efficiency measure the sender instead. T_N is the payments answered per second between the 10th
+and 90th percentile of answer times (no warm-up, no drain). Each run also records scoring's and
+Cassandra's p95 and the busiest pods: if T_4 stops growing while the scoring pods have CPU to
+spare, the limit is elsewhere (ingest's 2 copies, Kong, Cassandra or the sender), and the table
+shows which.
+
+### First run: 8-core VM, ingest at its usual 2 copies (11 Nov)
+
+| Scoring copies | Throughput T_N (/s) | E_N | p50 ms | p95 ms | 5xx | scoring /score p95 ms | Cassandra read p95 ms | busiest pods (cores) |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 252.8 | 1.00 | 886 | 1,865 | 0 of 18,000 | 797 | 84 | feature-job 1.32, ingest 0.89 + 0.88, scoring 0.80 |
+| 2 | 244.6 | 0.48 | 829 | 2,346 | 0 of 18,000 | 262 | 90 | feature-job 1.21, ingest 0.88 + 0.88, cassandra-0 0.67 |
+| 4 | 231.2 | 0.23 | 610 | 2,439 | 0 of 18,000 | 192 | 79 | feature-job 1.16, ingest 0.83 + 0.82, cassandra-1 0.65 |
+
+(p50 and p95 here are of a closed loop with 256 payments in flight: they show queueing, not the
+latency at a given rate, which is the ramp's job.)
+
+**Throughput stayed at about 250/s whatever the number of scoring copies**, so E_N here measures
+the bottleneck, not scoring. Scoring itself got faster with each copy (its p95 797 -> 262 -> 192
+ms): with 1 copy it was a queue, with 2 or 4 it wasn't, and the platform still answered 250/s.
+Two things were full instead:
+- **ingest**: its 2 fixed copies at about 0.88 cores each, near one Python process's ceiling
+  (it doesn't autoscale; at 200/s in the ramp it was the hop closest to its target);
+- **the VM**: the k3d nodes' CPU peaks add up to 6.6-6.8 of its 8 cores, before the 4 sending
+  processes, which run on the VM outside the cluster and aren't counted there.
+
+So on 8 cores the platform tops out near 250 payments a second, limited by CPU (ingest and the
+feature job most), not by scoring.
+
+### Rerun: 16-core VM, ingest held at 4 copies
+
+To measure scoring's own scaling, the rerun removes both limits: the VM is resized to
+m7i.4xlarge (16 vCPU; `docs/vm.md`, "Resizing"), ingest is held at 4 copies for the whole test
+(`INGEST`, put back afterwards), and the whole VM's CPU is logged every 2 s from `/proc/stat`
+(the cluster and the senders together), shown per run as mean / peak busy cores.
+
+**Result (12 Nov, m7i.4xlarge, ingest at 4 copies, 4 senders x 64 in flight):**
+
+| Scoring copies | Throughput T_N (/s) | E_N = T_N / (N x T_1) | p50 ms | p95 ms | 5xx | scoring /score p95 ms | Cassandra read p95 ms | VM CPU busy, mean / peak (of 16) | busiest pods (cores) |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 342.8 | 1.00 | 694 | 1,050 | 0 of 18,000 | 964 | 68 | 11.9 / 13.3 | feature-job 2.04, scoring 1.23, cassandra-2 1.10, cassandra-1 1.01 |
+| 2 | 424.2 | 0.62 | 568 | 808 | 0 of 18,000 | 578 | 81 | 13.7 / 14.8 | cassandra-0 0.85, feature-job 0.78, scoring 0.78, cassandra-2 0.77 |
+| 4 | 447.8 | 0.33 | 404 | 974 | 0 of 18,000 | 97 | 48 | 14.6 / 15.3 | feature-job 1.09, cassandra-2 0.85, cassandra-1 0.70, cassandra-0 0.68 |
+
+**Scoring scales until the machine is full.**
+- **With 1 copy, scoring is the bottleneck:** it used 1.23 cores, and its p95 of 964 ms was almost
+  all waiting in line.
+- **More copies remove that line:** scoring's own p95 fell from 964 to 578 to **97 ms** with 4
+  copies, and throughput rose from 343 to 448 payments a second.
+- **What stops throughput growing is the VM:** busy cores rose from 11.9 to 14.6 of 16 (peak 15.3),
+  counting the cluster and the four sending processes together. So E_N here falls because the
+  machine runs out of cores, not because scoring scales badly: with 4 copies scoring has less than
+  a tenth of the queue it had with one. A clean E_N for scoring alone would need the senders, the
+  feature job and Cassandra on other machines.
+- **The bigger machine** raised the platform's ceiling from about 250 (8 cores, ingest at 2) to
+  about 448 payments a second (16 cores, ingest at 4): 1.8 times from twice the cores, though two
+  things changed at once.
+- No errors in any run (0 of 54,000).
+
+**Getting there:** after the resize (a stop and start), Docker gave one k3d node a new address
+while its kubelet kept a certificate for the old one, and the pods created while Linkerd was still
+starting came up without their proxy (so they could talk to nothing, by design of the mesh
+rules). Both are in `docs/vm.md`, "After a stop and start".

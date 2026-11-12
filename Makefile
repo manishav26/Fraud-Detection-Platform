@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-siem k8s-siem-check k8s-kafka-check k8s-st11 k8s-st5 k8s-st6 k8s-st12 k8s-reset-data pseudonym k8s-pseudonym k8s-probe-attack k8s-spark-parity k8s-spark-throughput k8s-spark-logs spark-smoke k8s-linkerd st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
+.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-siem k8s-siem-check k8s-kafka-check k8s-st11 k8s-st5 k8s-st6 k8s-st12 k8s-reset-data pseudonym k8s-pseudonym k8s-probe-attack k8s-spark-parity k8s-spark-throughput k8s-spark-logs spark-smoke k8s-linkerd k8s-health st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-consistency k8s-ramp k8s-scaling k8s-failure k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
 keys:
 	./scripts/gen_keys.sh
 
@@ -60,6 +60,10 @@ k8s-st3:
 k8s-linkerd:
 	./scripts/k8s_linkerd.sh
 
+# Is the cluster healthy, and if not, what to do (read-only; docs/vm.md, "After a stop and start")
+k8s-health:
+	python scripts/k8s_health.py
+
 # ST4: from inside the cluster, only the allowed network paths connect (docs/network.md)
 k8s-st4:
 	python security/tests/st4_network.py
@@ -81,8 +85,11 @@ st2:
 	python security/tests/st2_roles.py --url $(URL)
 
 # ST7: one client floods at 200/s against a 50/s limit; another must barely notice
+# On the VM (docs/results/security.md, ST7): make st7 URL=http://localhost:8080 ST7_SECONDS=60 ST7_REPEATS=4
+ST7_SECONDS ?= 20
+ST7_REPEATS ?= 2
 st7:
-	python security/tests/st7_flood.py --url $(URL)
+	python security/tests/st7_flood.py --url $(URL) --seconds $(ST7_SECONDS) --repeats $(ST7_REPEATS)
 
 # ST8: edit the audit log's ROW-th row by hand as the database owner, then put it back
 st8-tamper:
@@ -213,6 +220,31 @@ k8s-apply:
 TEST ?= scale
 k8s-resilience:
 	PYTHON=python RERUN=$(RERUN) ./scripts/resilience_test.sh $(TEST)
+
+# Consistency, ONE vs LOCAL_QUORUM (VM only, 3-node Cassandra; docs/results/consistency.md):
+#   make k8s-consistency LEVEL=ONE CONDITION=healthy ROUND=1     (ROUND 1 or 2; behind: ROUND 1)
+LEVEL ?= ONE
+CONDITION ?= healthy
+ROUND ?= 1
+k8s-consistency:
+	PYTHON=python ./scripts/consistency_test.sh $(LEVEL) $(CONDITION) $(ROUND)
+
+# Ramp test (VM; docs/results/ramp.md): steps of 25-200 payments a second until a target is missed
+#   make k8s-ramp                         make k8s-ramp RATES="25 50"   (a shorter try)
+RATES ?= 25 50 75 100 150 200
+SENDERS ?= 1
+k8s-ramp:
+	PYTHON=python RATES="$(RATES)" SENDERS=$(SENDERS) ./scripts/ramp_test.sh
+
+# Scaling (VM; docs/results/scaling.md, week 5): 1, 2 and 4 scoring copies, the same work each
+k8s-scaling:
+	PYTHON=python ./scripts/scaling_test.sh
+
+# Failure tests (VM; docs/results/failures.md): KIND=scoring|cassandra|redpanda ROUND=1|2|3...
+#   make k8s-failure KIND=cassandra ROUND=1        make k8s-failure KIND=report
+KIND ?= scoring
+k8s-failure:
+	PYTHON=python ./scripts/failure_test.sh $(KIND) $(ROUND)
 
 # One of our services after a code change: rebuild, copy in, restart it (about a minute)
 #   make k8s-update SVC=model-admin-svc

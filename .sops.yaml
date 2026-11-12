@@ -4,4 +4,5 @@
 # own public key here (comma-separated) and runs `sops updatekeys deploy/k8s/secrets.enc.env`.
 creation_rules:
   - path_regex: deploy/k8s/secrets\.enc\.env$
-    age: age1gnm8jhvgxp0rvds82pu6ww62m35kqc2ex804jmals9rakanej52sd83mtd
+    # Urmi's laptop, then the week 5 measurement VM (docs/vm.md; removed at teardown)
+    age: age1gnm8jhvgxp0rvds82pu6ww62m35kqc2ex804jmals9rakanej52sd83mtd,age16yrfcv00q0mk9f7qy7cc23qdqmd6gh90wqft92akfzv8rk56n5esx37t8m

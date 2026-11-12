@@ -12,9 +12,10 @@ import argparse
 import asyncio
 import random
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from load.credentials import LOAD_CLIENT, credentials
-from load.sender import run
+from load.sender import run, write_csv
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -55,12 +56,17 @@ def main():
     p.add_argument("--concurrency", type=int, default=64)
     p.add_argument("--url", default="http://localhost:8000")
     p.add_argument("--client", default=LOAD_CLIENT, help="send as this client (docs/access.md)")
+    p.add_argument("--out", help="also save one row per payment here (CSV, as load/replay.py)")
     args = p.parse_args()
 
     print(f"Sending {int(args.rps * args.seconds):,} fake payments at {args.rps:g}/s"
           f" as {args.client}")
     stats, wall = asyncio.run(run(schedule(args.rps, args.seconds, args.users, args.seed),
-                                  args.url, args.concurrency, creds=credentials(args.client)))
+                                  args.url, args.concurrency, keep_rows=bool(args.out),
+                                  creds=credentials(args.client)))
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        write_csv(stats.rows, args.out)
     print(stats.summary(wall))
 
 

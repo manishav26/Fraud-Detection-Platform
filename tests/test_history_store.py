@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 from cassandra.cluster import NoHostAvailable
+from cassandra.query import UNSET_VALUE
 
 from features.history import NOVELTY_OF, history_for_one
 from store.history import COLUMNS, HistoryStore, row_values, to_datetime, to_past
@@ -26,7 +27,9 @@ def test_to_datetime_is_utc():
 
 def test_row_values_order_and_missing_attrs():
     values = row_values({"txn_id": "t1", "user_id": "u1", "amount": 5, "ts": "2026-01-01T00:00:00Z"})
-    assert values == ("u1", datetime(2026, 1, 1, tzinfo=UTC), "t1", 5.0, None, None, None)
+    # missing attributes are left unset, not null: a null is a tombstone in Cassandra
+    assert values == ("u1", datetime(2026, 1, 1, tzinfo=UTC), "t1", 5.0, UNSET_VALUE, UNSET_VALUE,
+                      UNSET_VALUE)
 
 
 def test_to_past_feeds_history_features():

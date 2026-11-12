@@ -27,6 +27,7 @@ NetworkPolicies, now with the mesh's ports).
 | Setting | Value | Why |
 |---|---|---|
 | `linkerd.io/inject` | `enabled` | every pod gets a proxy, including the data stores |
+| Linkerd's webhooks: `webhookFailurePolicy=Fail` (`scripts/k8s_linkerd.sh`; `kube-system` exempt) | fail closed | while the proxy injector isn't answering, a pod waits instead of starting without its proxy. With Linkerd's default (`Ignore`), pods created during the VM's restart (12 Nov) ran unmeshed and could reach nothing. `kube-system` is exempt, as Linkerd advises, so a down injector can't also block CoreDNS. `make k8s-health` finds any pod without its proxy |
 | `config.linkerd.io/default-inbound-policy` | `all-authenticated` | a pod accepts only callers that are in the mesh, so a pod without a mesh identity is refused even where the network rules let it through |
 | `config.linkerd.io/opaque-ports` | 9042, 29092, 5432 | Cassandra, Redpanda and Postgres aren't HTTP: the proxies encrypt them without trying to read them |
 | Kong's port 8000 (`mesh.yaml`) | `all-unauthenticated` | the public entrance: the laptop and payment clients aren't in the mesh. Kong still checks every token |

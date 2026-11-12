@@ -10,7 +10,7 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 | ST4 | Every workload and a pod with no labels try every pod and port | **pass** (cluster): only the allowed paths connect (25 since the SIEM); the intruder pod reaches nothing. Before the policies, every pod reached every port. Cassandra logins: scoring may only read and write its one table, and the old dev passwords are refused (12 of 12 checks). Redpanda logins (week 5): each workload may use only its topics, no login and a wrong password are refused (19 of 19 checks, 10 Nov) | below; `make k8s-st4`, `make k8s-kafka-check`; `docs/network.md`, `docs/kafka.md` |
 | ST5 | Schemathesis fuzzing | **pass** (cluster, 10 Nov): 2,240 cases (1,012 payments as load-test, 1,012 as merchant-1, 216 case-status), no 5xx. First found a 500 (text in a number attr) and a crash loop in the feature job (a time Java can't read); both fixed at the root, then passed | below; `make k8s-st5`; `docs/ingest.md` "Input" |
 | ST6 | Injection strings | **pass** (cluster, 10 Nov): 63 requests with 10 kinds of injection string in every text field, no 5xx, nothing leaked; ids refused (422), free text stored exactly as sent; tables, other cases and the audit chain (2,726 rows) intact. Found on the way: a NUL in a note would have been a 500 | below; `make k8s-st6` |
-| ST7 | One client floods against its limit | **limit: pass** (excess gets 429, held to ≤50/s). **Isolation: not shown on a laptop** (others' p95 +30% and +61% vs allowed traffic, within run-to-run noise); rerun on separate machines in week 5 | below; `make st7` |
+| ST7 | One client floods against its limit | **limit: pass** (excess gets 429, held to 50-51/s). **Isolation: fail at the 10% bar** (VM, 12 Nov: others' p95 +76% during a 200/s flood vs allowed traffic, 57 ms against 32 ms; more than twice the run-to-run spread; likely Kong verifying each refused request's token first) | below; `make st7` |
 | ST8 | Edit an audit row by hand | **pass**: verify names the edited row | `docs/results/alerts.md` |
 | ST9 | Swap the model file | **pass**, compose and cluster | `docs/results/promotion.md` |
 | ST10 | CI scan | **pass** (laptop and CI, 9 Nov): no secrets in 80 commits, no known vulnerabilities in our pins, no unwaived HIGH/CRITICAL in config or images. First run found 4 HIGH CVEs in every image and 4 HIGH settings; fixed or waived with reasons. Cluster passwords: none left in git in the clear, none of the old dev ones work (9 of 9 checks) | `docs/supply-chain.md`, `docs/secrets.md`; `make scan`, `make k8s-secrets-check` |
@@ -109,6 +109,44 @@ merchant-2 payment was answered.
   the flood sent from another machine.
 - **Next:** rerun in week 5 with the load sent from a separate machine (the rented VM planned for
   the Cassandra tests), and more repeats. Until then ST7's isolation half is open, not passed.
+
+**Week 5 rerun (VM):** `make st7 URL=http://localhost:8080 ST7_SECONDS=60 ST7_REPEATS=4`: 60 s
+per run (600 of merchant-2's payments per p95 instead of 200) and 4 B/C pairs, alternating. The
+script now also prints how much the four identical B runs differ: a C-vs-B difference smaller than
+that spread is noise, not the flood. The senders run on the VM itself, which has cores to spare at
+these rates (the ramp shows how much), unlike the laptop.
+
+**Result (VM, 12 Nov):**
+
+| Run | merchant-1 sends | merchant-1 status codes | accepted/s | merchant-2 | merchant-2 p95 ms |
+|---|---|---|---|---|---|
+| A | nothing | – | 0 | 200 x 600 | 23.6 |
+| B | 45/s | 200 x 2,700 | 45 | 200 x 600 | 28.3 |
+| C | 200/s | 200 x 3,018, 429 x 8,982 | 50 | 200 x 600 | 46.3 |
+| B | 45/s | 200 x 2,700 | 45 | 200 x 600 | 28.0 |
+| C | 200/s | 200 x 3,047, 429 x 8,953 | 51 | 200 x 600 | 52.1 |
+| B | 45/s | 200 x 2,696, 429 x 4 | 45 | 200 x 600 | 34.4 |
+| C | 200/s | 200 x 3,054, 429 x 8,946 | 51 | 200 x 600 | 62.6 |
+| B | 45/s | 200 x 2,687, 429 x 13 | 45 | 200 x 600 | 38.1 |
+| C | 200/s | 200 x 3,027, 429 x 8,973 | 50 | 200 x 600 | 66.4 |
+
+- **The limit: pass.** merchant-1 was held to 50-51/s in every flood (about 8,950 requests a
+  minute got 429), and every one of merchant-2's 4,800 payments was answered.
+- **Isolation: fail, and this time it's a real effect, not noise.** merchant-2's p95 averaged
+  32.2 ms with merchant-1 inside its limit (B) and 56.8 ms during the flood (C): +76%, against the
+  10% the test allows. C was higher than B in all four pairs, and the difference is more than twice
+  the spread of the four identical B runs (28.0-38.1 ms, 31%). In absolute terms it is small: 57 ms
+  at p95 during a four-times flood, against the 250 ms target.
+- **Likely cause, not yet measured:** a refused request is not free. Kong runs the JWT check
+  (a signature verification) before the rate limit, so each of the ~150 extra requests a second is
+  still verified by Kong's single copy before it gets its 429; the flood's sender also runs on the
+  same VM. A check of Kong's own latency in the B and C windows would confirm it.
+- **What would fix it (future work):** refuse floods before authentication (a cheap limit per
+  source address in front of the JWT check, or at the load balancer), and give Kong more than one
+  copy. The backend is already isolated: ingest and scoring only ever saw merchant-1's 50/s.
+
+So ST7's limit half passes and its isolation half fails at the 10% bar, with a measured cost of
+about +25 ms at p95 for other clients during a flood.
 
 ## ST4: network isolation (k3d cluster, 8 Nov)
 
@@ -219,6 +257,13 @@ The backfill stores each missing e-mail, device or product as an empty cell, whi
 keeps as a tombstone, and one unpaged read over the whole history passed its 100,000 limit. ST11
 now reads in pages. Writing missing values as "unset" instead would avoid the tombstones (and a
 little work on every history read); planned with the next backfill, on the VM.
+**Fixed (11 Nov):** every writer (scoring, the backfill, the feature job) now leaves a missing
+value unset (`store/history.py`, `stream/sink.py`), so no new tombstones; the VM's data is
+reloaded with `make k8s-reset-data` to drop the old ones. **Checked (VM, 11 Nov),** after
+rebuilding scoring and the feature job (the fix reaches a running service only with its image)
+and reloading: Cassandra's own trace of a history read says `Read 1 live rows and 0 tombstone
+cells` on both copies that answered. Before, `nodetool tablestats` showed up to 10 per read; after,
+"1.0 average, 1 maximum", which is how that statistic records zero (its smallest bucket spans 0-1).
 
 **Limit:** the payment's attributes (`card1`, `addr1`, ...) are model features and stay in the
 payment topics, readable by alert-svc and the feature job only (`docs/privacy.md`).

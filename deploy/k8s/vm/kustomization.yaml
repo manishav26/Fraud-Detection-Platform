@@ -3,6 +3,10 @@
 # can't hold 3, so it keeps the base (one node). Used by: OVERLAY=vm scripts/k8s_up.sh
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# The base's `namespace: fraud` covers only the base's own resources, not the ones added here:
+# without this line cassandra-peers and the PDB went to `default`, where cassandra-1 could not
+# find cassandra-0.cassandra-peers.fraud.svc.cluster.local and crash-looped (VM, 11 Nov 2026)
+namespace: fraud
 resources:
   - ../base
   - cassandra-peers.yaml

@@ -9,7 +9,7 @@ Manisha) run on one AWS VM instead, with the same k3d setup and the same scripts
 | Choice | Value | Why |
 |---|---|---|
 | Instance | m7i.2xlarge: 8 vCPU, 32 GiB, Intel, **on-demand** | the platform uses about 6 GB today; a 3-node Cassandra adds about 3.5 GB, the feature job 2 GB, plus the load generator; 4 scoring copies at once need the cores. Not spot: a spot VM can be taken away mid-test |
-| Region | us-west-2 (Oregon) | close; the usual price |
+| Region | us-east-2 (Ohio) | the account's region: it uses AWS's simplified console, which sets the region itself (Oregon was the first choice). Nothing here depends on the region; the load, Cassandra and scoring all run inside the VM |
 | OS | Ubuntu Server 24.04 LTS, x86_64 | `scripts/vm_setup.sh` installs the laptop's tool versions on it |
 | Disk | 100 GB gp3, encrypted | images, data and Cassandra; encryption at rest for the measurement runs (threat 8) |
 | Network | only SSH (22), only from your IP | everything else through SSH tunnels |
@@ -19,7 +19,12 @@ Manisha) run on one AWS VM instead, with the same k3d setup and the same scripts
 recipient), the promotion **private** key (promotions are signed on the laptop), and the repo's
 GitHub credentials (the VM gets the committed code from `scripts/vm_sync.sh`).
 
-## 1. AWS account, once (console, us-west-2)
+## 1. AWS account, once (console, us-east-2)
+
+Done on 11 Nov 2026. The account is on AWS's **Free plan** ($120 of credits, which cover the
+plan's roughly $25). If the launch (step 2) refuses m7i.2xlarge because of the plan, upgrade to
+the Paid plan (Billing and Cost Management); check on that page that unused credits carry over.
+After an upgrade, the budget alert below is what catches spending past the credits.
 
 1. **Budget:** Billing and Cost Management -> Budgets -> Create budget -> Cost budget, monthly,
    **$30**; alerts at 50%, 80% and 100% to your e-mail.
@@ -31,7 +36,10 @@ GitHub credentials (the VM gets the committed code from `scripts/vm_sync.sh`).
    ssh-keygen -t ed25519 -f ~/.ssh/fraud-vm -C fraud-vm
    ```
 4. **Security group** `fraud-vm`: inbound **SSH, port 22, source "My IP"** and nothing else;
-   outbound: all (to pull images and packages).
+   outbound: all (to pull images and packages). "My IP" is only the address you are on: from
+   another network (campus), add one more SSH rule with source "My IP" while there, and test
+   `ssh fraud-vm 'uname -a'` before the day you need it (some campus networks block port 22).
+   Never "Anywhere (0.0.0.0/0)".
 
 ## 2. Launch (Thursday morning)
 
@@ -97,7 +105,9 @@ cd ~/fraud && source .venv/bin/activate
 ```bash
 make cluster AGENTS=3 && OVERLAY=vm make k8s-up && make k8s-backfill
 ```
-`OVERLAY=vm` gives Cassandra 3 nodes, one per k3d agent (`docs/cassandra.md`, "Three nodes"); they
+After this first deploy, `make k8s-up` and `make k8s-apply` take the setup from the running cluster
+(its Cassandra says which it is), so `OVERLAY=vm` isn't needed again, and asking for the other
+setup is refused. `OVERLAY=vm` gives Cassandra 3 nodes, one per k3d agent (`docs/cassandra.md`, "Three nodes"); they
 join one after another, so `k8s-up` takes a few minutes longer. Check all three are up (`UN`) and
 both keyspaces have 3 copies:
 ```bash
@@ -141,7 +151,34 @@ That kubeconfig is the cluster's admin login: keep it at mode 600 and delete it 
 - **Stop the instance when idle** (EC2 -> Instance state -> Stop). The disk keeps everything, and
   k3d's containers come back when Docker starts. Its public IP changes on every start: update
   `HostName` in `~/.ssh/config`.
-- After a start: `ssh fraud-vm`, `kubectl get nodes` (all Ready), `kubectl -n fraud get pods`.
+- After a start: `ssh fraud-vm`, then `make k8s-health` (next section).
+
+## 9a. After a stop and start
+
+Give the cluster 5-10 minutes (Cassandra's nodes rejoin one at a time), then:
+```bash
+cd ~/fraud && source .venv/bin/activate && make k8s-health
+```
+It only reads, and prints the command that fixes each problem, in the order to run them; run
+it again until it says `healthy`. Two problems seen on 12 Nov:
+- **A node's kubelet with a certificate for an old address.** Docker can give a k3d node a new
+  address when the VM starts, and that node's kubelet keeps its certificate for the old one: logs,
+  exec and port-forward to its pods fail (`x509: certificate is valid for ..., not ...`). Fix:
+  `docker restart <that node>`, one node at a time (it gets a certificate for its new address).
+- **Pods without their mesh proxy.** Pods created while Linkerd's injector was still starting
+  came up without one and, by our mesh rules, could reach nothing. The injector now fails closed
+  (`scripts/k8s_linkerd.sh`: such pods wait until it answers instead), so this should not recur;
+  the check still finds any older ones, and the fix deletes them so they're recreated with it.
+
+## 9b. Resizing (the scaling rerun, 11 Nov)
+
+The scaling test filled the 8 cores (`docs/results/scaling.md`), so its rerun uses m7i.4xlarge
+(16 vCPU, 64 GiB; about twice the hourly price: check the pricing page). The disk and the cluster
+stay; only the machine changes. After the rerun, resize back to m7i.2xlarge the same way.
+1. Stop the VM: EC2 -> Instances -> `fraud-vm` -> Instance state -> **Stop**; wait for **Stopped**.
+2. Actions -> Instance settings -> **Change instance type** -> `m7i.4xlarge` -> Apply.
+3. Instance state -> **Start**; copy the new public IPv4 into `HostName` in `~/.ssh/config`.
+4. `ssh fraud-vm`, then `make k8s-health` until it says `healthy` (9a).
 
 ## 10. Teardown (after the demo and the last measurement)
 
@@ -155,8 +192,9 @@ That kubeconfig is the cluster's admin login: keep it at mode 600 and delete it 
 
 ## Not covered here
 
-- **The consistency and failure tests themselves** (ONE vs QUORUM, a node killed): their own
-  designs, on this VM, once the 3-node Cassandra is up.
+- **The consistency test** (ONE vs QUORUM): `docs/results/consistency.md`, run with
+  `make k8s-consistency` on this VM once the 3-node Cassandra is up.
+- **The failure tests** (a node killed): their own design.
 - **gen_keys on the VM:** with only the promotion public key there, `scripts/gen_keys.sh` keeps it
   (it used to make a new pair whenever the private key was missing, which would have replaced the
   laptop's public key and made every promotion fail).

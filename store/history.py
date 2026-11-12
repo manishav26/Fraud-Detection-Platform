@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
 from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
-from cassandra.query import ConsistencyLevel, dict_factory
+from cassandra.query import UNSET_VALUE, ConsistencyLevel, dict_factory
 
 UNKNOWN_PART = "NA"   # features/proxy_id.py writes this for a missing part of the proxy id
 
@@ -49,10 +49,19 @@ def to_datetime(ts):
 
 
 def row_values(txn):
-    """A request dict (txn_id, user_id, amount, ts, attrs) -> values for INSERT, in order."""
+    """A request dict (txn_id, user_id, amount, ts, attrs) -> values for INSERT, in order.
+
+    A missing attribute is left unset, not written as null: Cassandra stores a null as a
+    tombstone, which every later read of that user's history has to skip (ST11's full read hit
+    Cassandra's 100,000-tombstone limit, docs/results/security.md). Unset reads back as None too,
+    and a row is only ever rewritten with the same values, so nothing else changes."""
     attrs = txn.get("attrs") or {}
     return (txn["user_id"], to_datetime(txn["ts"]), txn["txn_id"], float(txn["amount"]),
-            *(attrs.get(col) for col in COLUMNS))
+            *(unset_if_missing(attrs.get(col)) for col in COLUMNS))
+
+
+def unset_if_missing(value):
+    return UNSET_VALUE if value is None else value
 
 
 def to_past(rows):
@@ -80,7 +89,9 @@ def auth_provider():
 
 
 class HistoryStore:
-    def __init__(self, hosts=None, keyspace="fraud", consistency=None):
+    def __init__(self, hosts=None, keyspace="fraud", consistency=None, address_translator=None):
+        """address_translator: for a tool outside the cluster that reaches each node through its
+        own tunnel (load/consistency_check.py); in-cluster clients leave it out."""
         hosts = hosts or os.getenv("CASSANDRA_HOSTS", "localhost").split(",")
         level = consistency or os.getenv("CASSANDRA_CONSISTENCY", "LOCAL_QUORUM")
         profile = ExecutionProfile(
@@ -90,8 +101,9 @@ class HistoryStore:
             consistency_level=ConsistencyLevel.name_to_value[level],
             row_factory=dict_factory,
         )
+        extra = {} if address_translator is None else {"address_translator": address_translator}
         self.cluster = Cluster(hosts, execution_profiles={EXEC_PROFILE_DEFAULT: profile},
-                               auth_provider=auth_provider())
+                               auth_provider=auth_provider(), **extra)
         self.session = self.cluster.connect(keyspace)
         # prepared once: Cassandra parses the query a single time, later calls only send values
         self.insert = self.session.prepare(INSERT)

@@ -67,6 +67,10 @@ def test_sops_encrypts_the_file_for_an_age_key():
     assert rule["age"].startswith("age1") and "AGE-SECRET-KEY" not in (ROOT / ".sops.yaml").read_text()
 
 
+# Guards against committing a decrypted file, so it needs a repository: the measurement VM gets
+# the code as a `git archive` export (scripts/vm_sync.sh) and can't commit; the laptop and CI
+# run it on the same .gitignore.
+@pytest.mark.skipif(not (ROOT / ".git").exists(), reason="not a git repository (the VM's exported copy)")
 def test_a_decrypted_copy_would_be_ignored_by_git():
     for path in ("deploy/k8s/secrets.env", "deploy/k8s/plain.env", "keys.txt"):
         assert subprocess.run(["git", "check-ignore", "-q", path], cwd=ROOT, check=False).returncode == 0, path

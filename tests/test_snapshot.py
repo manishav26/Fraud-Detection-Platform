@@ -23,6 +23,12 @@ ANSWERS = {
     "steps_p95": [sample(0.05, step="predict")],
     "cpu_node_peak": [sample(2.71, node="k3d-fraud-server-0")],
     "cpu_pod_peak": [sample(0.4, pod="ingest-svc-a"), sample(0.9, pod="cassandra-0")],
+    "kong_p95": [sample(820)],            # Kong reports milliseconds
+    "kong_own_p95": [sample(3)],
+    "kong_upstream_p95": [sample(810)],
+    "ingest_steps_p95": [sample(0.004, step="publish_raw"), sample(0.75, step="wait_scoring")],
+    "freshness_p95": [sample(1.8)],
+    "feature_job_payments": [],           # no data: shown as a gap, written as null
 }
 
 
@@ -72,3 +78,39 @@ def test_render_without_cpu_figures_leaves_the_table_out():
                                                 if q.format(w="300s") == e)], 300)
     text = snapshot.render(s)
     assert "Peak CPU" not in text and "Busiest pods" not in text
+
+
+def test_kong_milliseconds_become_seconds_like_the_rest():
+    s = snapshot.collect(fake_query([]), 600)
+    assert (s["kong_p95"], s["kong_own_p95"], s["kong_upstream_p95"]) == (0.82, 0.003, 0.81)
+    assert s["ingest_steps_p95"] == {"publish_raw": 0.004, "wait_scoring": 0.75}
+
+
+def test_render_shows_the_gateway_and_the_feature_job():
+    text = snapshot.render(snapshot.collect(fake_query([]), 600))
+    assert "| Kong itself (p95) | 3 ms |" in text
+    assert "| Kong waiting for ingest (p95) | 810 ms |" in text
+    assert "| ingest step: publish_raw (p95) | 4 ms |" in text
+    assert "| feature job: txn.raw -> features written (p95) | 1.8 s |" in text
+    assert "| feature job: payments handled | – |" in text
+
+
+def test_json_writes_no_data_as_null():
+    import json
+    numbers = json.loads(snapshot.to_json(snapshot.collect(fake_query([]), 600)))
+    assert numbers["feature_job_payments"] is None
+    assert numbers["p95"]["scoring-svc"] is None and numbers["kong_p95"] == 0.82
+
+
+def test_every_metric_a_ramp_step_needs_is_queried():
+    text = " ".join(snapshot.QUERIES.values())
+    assert all(m.removesuffix("_bucket") in text for m in snapshot.REQUIRED_METRICS)
+
+
+def test_no_degraded_series_is_zero_only_while_scoring_reports_decisions():
+    """On a cluster that never scored degraded there is no degraded="true" series; the query falls
+    back to 0 x all decisions, which is empty (no data) if scoring reports nothing at all."""
+    expr = snapshot.QUERIES["degraded"].format(w="120s")
+    left, right = expr.split(" or ")
+    assert 'degraded="true"' in left
+    assert right == "0 * sum(increase(scoring_decisions_total[120s]))"

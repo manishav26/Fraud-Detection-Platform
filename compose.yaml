@@ -97,9 +97,6 @@ services:
   ingest-svc:
     build: { context: ., dockerfile: services/ingest-svc/Dockerfile }
     image: fraud/ingest-svc:dev
-    networks:
-      default:
-        aliases: [ingest-pods]   # the name Kong uses, the same as on Kubernetes
     environment:
       SCORING_URL: "http://scoring-svc:8000"
       KAFKA_BOOTSTRAP: "redpanda:29092"

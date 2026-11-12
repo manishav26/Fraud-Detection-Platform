@@ -14,7 +14,29 @@ NS=fraud
 MODE=${1:-all}
 # Which Kustomize overlay: base (the laptop: one Cassandra node) or vm (the measurement VM: three;
 # docs/vm.md). Cassandra's copies (replication factor) follow it.
-OVERLAY=${OVERLAY:-base}
+# A running cluster already says which one it is: the VM's Cassandra finds its peers through the
+# cassandra-peers Service, the base's has only `cassandra`. So with no OVERLAY given, use the
+# running one; a different one is refused. Relying on remembering OVERLAY=vm failed once (11 Nov):
+# a plain `make k8s-apply` on the VM tried to turn its 3-node Cassandra back into 1, and only
+# Kubernetes refusing to change the StatefulSet's fixed fields stopped it.
+pick_overlay() {   # pick_overlay <OVERLAY asked for, or empty> <running Cassandra's serviceName>
+  local asked=$1 running
+  case "$2" in
+    cassandra-peers) running=vm ;;
+    cassandra) running=base ;;
+    "") running="" ;;                       # no cluster yet: whatever is asked, base by default
+    *) echo "unknown Cassandra setup ($2): pass OVERLAY explicitly" >&2; return 1 ;;
+  esac
+  if [ -n "$running" ] && [ -n "$asked" ] && [ "$asked" != "$running" ]; then
+    echo "This cluster runs the '$running' setup; OVERLAY=$asked would change it. Switching needs" \
+         "a new cluster: make k8s-down first (it deletes the data)." >&2
+    return 1
+  fi
+  echo "${asked:-${running:-base}}"
+}
+RUNNING_CASSANDRA=$(kubectl -n "$NS" get statefulset cassandra -o jsonpath='{.spec.serviceName}' 2>/dev/null || true)
+OVERLAY=$(pick_overlay "${OVERLAY:-}" "$RUNNING_CASSANDRA")
+if [ -n "$RUNNING_CASSANDRA" ]; then echo "setup: $OVERLAY (as the running cluster)"; else echo "setup: $OVERLAY"; fi
 case "$OVERLAY" in
   base) CASSANDRA_RF=1 ;;
   vm) CASSANDRA_RF=3 ;;
@@ -202,8 +224,9 @@ echo "3/5 Linkerd (if missing), then apply the Kustomize base"
 # Pods whose YAML changed restart by themselves; a changed config map alone restarts nothing
 kubectl apply -k "deploy/k8s/$OVERLAY"
 # `kubectl apply` never deletes what a manifest no longer has. Left over from earlier versions:
-# the ingest-svc Service, replaced by ingest-pods in week 4 (Kong reaches the pods directly)
-kubectl -n "$NS" delete service ingest-svc --ignore-not-found
+# the headless ingest-pods Service, replaced by the normal ingest-svc on 11 Nov (Kong's Linkerd
+# proxy balances across the ingest pods now; docs/k8s.md)
+kubectl -n "$NS" delete service ingest-pods --ignore-not-found
 
 if [ "$MODE" = apply ]; then
   shift
@@ -267,4 +290,6 @@ echo "5/5 wait for our services (they retry until Redpanda and Cassandra answer)
 wait_for mlflow token-issuer scoring-svc ingest-svc alert-svc model-admin-svc siem-mock kong prometheus grafana
 kubectl -n "$NS" rollout status statefulset/feature-job --timeout=300s
 kubectl -n "$NS" get pods -o wide
+# Every pod meshed and ready, every node's kubelet reachable, Cassandra all up (read-only)
+"${PYTHON:-python3}" scripts/k8s_health.py
 echo "Gateway: http://localhost:8080"

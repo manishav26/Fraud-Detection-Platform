@@ -55,8 +55,8 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 6
-          # Wait before shutting down: Kong refreshes ingest-pods' DNS every 5 s, so after 15 s it
-          # has stopped sending here, and nothing is on its way when the pod closes its connections
+          # Wait before shutting down: a leaving pod drops out of the Service's ready list at once,
+          # and the 15 s let Kong's proxy stop sending here and the requests already here finish
           lifecycle:
             preStop: {sleep: {seconds: 15}}
           volumeMounts:
@@ -72,16 +72,18 @@ spec:
         - name: tmp
           emptyDir: {sizeLimit: 256Mi}
 ---
-# Headless (no single Service address): the DNS name returns each ready pod's address, so Kong
-# balances across the pods itself and stops choosing one within the DNS cache time (5 s) of it
-# leaving. Through a normal Service address, Kong's reused connections stayed tied to a pod after
-# it left, and failed when it shut down (docs/results/scaling.md). Only Kong calls ingest.
+# A normal Service: Kong sends to its one name, and Kong's Linkerd proxy balances each request
+# across the ready ingest pods, following Kubernetes' list of them as it changes. Only Kong calls
+# ingest. Until 11 Nov this was headless (`ingest-pods`: Kong resolved and balanced the pods
+# itself), which fixed connections staying tied to a leaving pod before the mesh existed; with
+# the mesh it made Kong keep serving expired DNS answers, so after both ingest pods were replaced
+# its first payments went to addresses that no longer existed: 502s (docs/k8s.md,
+# docs/results/scaling.md, "Error cause 3").
 apiVersion: v1
 kind: Service
 metadata:
-  name: ingest-pods
+  name: ingest-svc
 spec:
-  clusterIP: None
   selector: {app: ingest-svc}
   ports:
     - {name: http, port: 8000}
