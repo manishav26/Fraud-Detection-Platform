@@ -237,4 +237,30 @@ m7i.4xlarge (16 vCPU; `docs/vm.md`, "Resizing"), ingest is held at 4 copies for 
 (`INGEST`, put back afterwards), and the whole VM's CPU is logged every 2 s from `/proc/stat`
 (the cluster and the senders together), shown per run as mean / peak busy cores.
 
-*(results to be filled in from the rerun)*
+**Result (12 Nov, m7i.4xlarge, ingest at 4 copies, 4 senders x 64 in flight):**
+
+| Scoring copies | Throughput T_N (/s) | E_N = T_N / (N x T_1) | p50 ms | p95 ms | 5xx | scoring /score p95 ms | Cassandra read p95 ms | VM CPU busy, mean / peak (of 16) | busiest pods (cores) |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 342.8 | 1.00 | 694 | 1,050 | 0 of 18,000 | 964 | 68 | 11.9 / 13.3 | feature-job 2.04, scoring 1.23, cassandra-2 1.10, cassandra-1 1.01 |
+| 2 | 424.2 | 0.62 | 568 | 808 | 0 of 18,000 | 578 | 81 | 13.7 / 14.8 | cassandra-0 0.85, feature-job 0.78, scoring 0.78, cassandra-2 0.77 |
+| 4 | 447.8 | 0.33 | 404 | 974 | 0 of 18,000 | 97 | 48 | 14.6 / 15.3 | feature-job 1.09, cassandra-2 0.85, cassandra-1 0.70, cassandra-0 0.68 |
+
+**Scoring scales until the machine is full.**
+- **With 1 copy, scoring is the bottleneck:** it used 1.23 cores, and its p95 of 964 ms was almost
+  all waiting in line.
+- **More copies remove that line:** scoring's own p95 fell from 964 to 578 to **97 ms** with 4
+  copies, and throughput rose from 343 to 448 payments a second.
+- **What stops throughput growing is the VM:** busy cores rose from 11.9 to 14.6 of 16 (peak 15.3),
+  counting the cluster and the four sending processes together. So E_N here falls because the
+  machine runs out of cores, not because scoring scales badly: with 4 copies scoring has less than
+  a tenth of the queue it had with one. A clean E_N for scoring alone would need the senders, the
+  feature job and Cassandra on other machines.
+- **The bigger machine** raised the platform's ceiling from about 250 (8 cores, ingest at 2) to
+  about 448 payments a second (16 cores, ingest at 4): 1.8 times from twice the cores, though two
+  things changed at once.
+- No errors in any run (0 of 54,000).
+
+**Getting there:** after the resize (a stop and start), Docker gave one k3d node a new address
+while its kubelet kept a certificate for the old one, and the pods created while Linkerd was still
+starting came up without their proxy (so they could talk to nothing, by design of the mesh
+rules). Both are in `docs/vm.md`, "After a stop and start".
