@@ -4,7 +4,8 @@
 
 Registering does not make a model live: that takes `make promote`, and the promotion key.
 Each version's run also records how the model was trained (ml/train/training_record.py):
-its settings, data windows, test metrics on days 92-109 and the git commit.
+its settings, data windows, test metrics on the model's own test days (meta.json; 92-109 for v1)
+and the git commit.
 """
 
 import argparse
@@ -53,10 +54,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--folder", required=True)
     p.add_argument("--no-metrics", action="store_true",
-                   help="skip measuring the model on days 92-109 (saves 1-2 minutes)")
+                   help="skip measuring the model on its test days (saves 1-2 minutes)")
     args = p.parse_args()
     print("recording how the model was trained"
-          + ("" if args.no_metrics else " (measuring it on days 92-109, 1-2 minutes)") + "...")
+          + ("" if args.no_metrics else " (measuring it on its own test days, 1-2 minutes)") + "...")
     record = checked_record(args.folder, with_metrics=not args.no_metrics)
     mlflow.set_tracking_uri(TRACKING_URI)
     version, hashes = register(MlflowClient(TRACKING_URI, TRACKING_URI), args.folder,

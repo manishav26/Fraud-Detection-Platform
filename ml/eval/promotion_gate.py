@@ -7,7 +7,9 @@ candidate passes only if all four checks pass:
   2. fast    score + reasons for one payment (p95, one thread) at most MAX_SLOWDOWN (1.2) times
              the current model's, both timed in the same run on the same machine. It used to be
              an absolute 5 ms, but the same code takes ~3 ms on one laptop and ~11 ms on another
-             (docs/results/model_admin.md), so that measured the machine running the gate
+             (docs/results/model_admin.md), so that measured the machine running the gate.
+             The two are timed together, interleaved (measure_pair), so a busy moment on the
+             machine slows both alike
   3. safe    share of payments flagged (review + decline) within analyst capacity (2%)
   4. unseen  neither model was trained or calibrated on the test days
 
@@ -86,27 +88,56 @@ def golden_set(df, days=GOLDEN_DAYS):
     return df[(day >= first) & (day <= last)]
 
 
-def measure(model, golden, sample=TIMING_SAMPLE, seed=0):
-    """PR-AUC, flagged share and per-payment latency (score + reasons) of one model."""
-    rows = golden[model.features].to_dict("records")
-    y = golden[TARGET].to_numpy()
-    probs = model.predict_rows(rows)
+def quality(model, golden):
+    """PR-AUC and flagged share of one model on the golden set."""
+    probs = model.predict_rows(golden[model.features].to_dict("records"))
     flagged = probs >= model.meta["thresholds"]["review_threshold"]
+    return {"PR-AUC": float(average_precision_score(golden[TARGET].to_numpy(), probs)),
+            "flagged share": float(flagged.mean())}
 
+
+def timing_sample(golden, sample=TIMING_SAMPLE, seed=0):
+    """The payments to time: the same ones for every model."""
     rng = np.random.default_rng(seed)
-    picked = [rows[i] for i in rng.choice(len(rows), min(sample, len(rows)), replace=False)]
-    for r in picked[:WARM_UP]:
-        model.predict_rows([r])
-        model.explain_rows([r])
-    ms = []
-    for r in picked:
-        start = time.perf_counter()
-        model.predict_rows([r])
-        model.explain_rows([r])
-        ms.append((time.perf_counter() - start) * 1000)
-    return {"PR-AUC": float(average_precision_score(y, probs)),
-            "flagged share": float(flagged.mean()),
-            "p95 ms": float(np.percentile(ms, 95))}
+    return golden.iloc[rng.choice(len(golden), min(sample, len(golden)), replace=False)]
+
+
+def time_one(model, row):
+    """ms to score one payment and give its reasons."""
+    start = time.perf_counter()
+    model.predict_rows([row])
+    model.explain_rows([row])
+    return (time.perf_counter() - start) * 1000
+
+
+def measure(model, golden, sample=TIMING_SAMPLE, seed=0):
+    """PR-AUC, flagged share and per-payment latency (score + reasons) of one model on its own
+    (the training record). To compare two models, use measure_pair."""
+    rows = timing_sample(golden, sample, seed)[model.features].to_dict("records")
+    for r in rows[:WARM_UP]:
+        time_one(model, r)
+    return {**quality(model, golden), "p95 ms": float(np.percentile([time_one(model, r) for r in rows], 95))}
+
+
+def measure_pair(candidate, current, golden, sample=TIMING_SAMPLE, seed=0, timer=time_one):
+    """`measure` for both models, timed together: each payment goes through both, the order
+    alternating. Timed one model after the other, a few busy seconds on the machine fell on one
+    model only: on a laptop the same two models came out 1.61x, 1.20x and 0.89-1.01x apart
+    (12 Nov), more than the 1.2x the `fast` rule allows. Interleaved, both share the same moments,
+    so the ratio measures the models, not the machine. Returns (candidate, current)."""
+    picked = timing_sample(golden, sample, seed)
+    rows = [picked[m.features].to_dict("records") for m in (candidate, current)]
+    models = (candidate, current)
+    for i in range(min(WARM_UP, len(picked))):
+        for m, r in zip(models, rows, strict=True):
+            timer(m, r[i])
+    ms = ([], [])
+    for i in range(len(picked)):
+        order = (0, 1) if i % 2 == 0 else (1, 0)
+        for k in order:
+            ms[k].append(timer(models[k], rows[k][i]))
+    return tuple({**quality(m, golden), "p95 ms": float(np.percentile(t, 95))}
+                 for m, t in zip(models, ms, strict=True))
 
 
 def check(candidate, current, min_gain=MIN_GAIN, max_slowdown=MAX_SLOWDOWN, capacity=REVIEW_CAPACITY):
@@ -141,7 +172,7 @@ def main():
     print(f"test days {days[0]}-{days[1]}: {len(golden):,} payments, "
           f"{int(golden[TARGET].sum()):,} frauds")
 
-    cand, curr = measure(candidate_model, golden), measure(current_model, golden)
+    cand, curr = measure_pair(candidate_model, current_model, golden)
     passed, rows = check(cand, curr)
     rows.append(unseen(days, candidate_model, current_model))
     passed = passed and rows[-1]["passed"]

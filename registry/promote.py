@@ -78,7 +78,8 @@ def run_gate(candidate_folder, current_folder, against):
     # its training, and both models must not have seen them (the `unseen` check)
     days = gate.held_out_days(candidate)
     golden = gate.golden_set(gate.load_data(), days)
-    cand, curr = gate.measure(candidate, golden), gate.measure(current, golden)
+    # Timed together, interleaved, so a busy moment on this laptop can't fail `fast` (12 Nov)
+    cand, curr = gate.measure_pair(candidate, current, golden)
     passed, rows = gate.check(cand, curr)
     rows.append(gate.unseen(days, candidate, current))
     passed = passed and rows[-1]["passed"]

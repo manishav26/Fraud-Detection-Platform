@@ -81,7 +81,7 @@ What model-admin-svc checks before publishing (`services/model-admin-svc/app/rul
 - **Check and record happen in one transaction, holding the audit chain's lock**, so two
   promotions sent at once can't both pass the sequence check.
 - **The gate runs on the laptop, before signing**, because it needs the training data and both
-  models (`ml/eval/promotion_gate.py`: +0.01 PR-AUC, score + reasons p95 at most 1.2 times the live model's on the same machine, at most 2%
+  models (`ml/eval/promotion_gate.py`: +0.01 PR-AUC, score + reasons p95 at most 1.2 times the live model's, both timed together on the same machine, at most 2%
   flagged). Its verdict and numbers are signed into the message, so the audit row shows them and
   an override can't be hidden. `OVERRIDE="why"` promotes past a "keep" and records why.
 - **A rollback skips the gate:** it is the way back when a model goes wrong, and the version it
