@@ -194,3 +194,13 @@ def test_scaling_holds_ingest_and_puts_it_back():
     assert 'scale deploy/ingest-svc --replicas="$INGEST"' in text
     restore = text[text.index("restore() {"):text.index("trap restore EXIT")]
     assert 'scale deploy/ingest-svc --replicas="$ORIG_INGEST"' in restore and 'kill "$CPU_LOG"' in restore
+
+
+def test_answers_slower_than_the_p99_target_are_noticed_too(tmp_path):
+    # errors until 70 s, then answers taking 3 s until 90 s: the outage lasts until 90 s + 3 s
+    rows = [(s, "503", 5000, False) if 60 <= s < 70 else
+            (s, "200", 3000, False) if 70 <= s < 90 else (s, st, ms, d) for s, st, ms, d in steady()]
+    r = failures.analyse(failure_run(tmp_path, "redpanda-1", "redpanda", rows))
+    assert r["errors"] == 100 and r["slow"] == 200 and r["degraded"] == 0
+    assert r["client_mttr_s"] == pytest.approx(89.9 + 3 - 60, abs=0.01)
+    assert failures.SLOW_MS == 1500

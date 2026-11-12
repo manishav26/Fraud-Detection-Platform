@@ -15,15 +15,26 @@ import json
 import re
 from pathlib import Path
 
+from load.ramp import TARGETS
+
 # Assumed: each of these fails about once a month (a pod crash, a node lost, a broker restart).
 # Six weeks can't measure it; the report states it and shows what changes if it is a week.
 MTBF_HOURS = 30 * 24
 KINDS = ("scoring", "cassandra", "redpanda")
 
 
+# Slower than this is noticed too: the p99 target (load/ramp.py). During a Redpanda restart the
+# sender's in-flight slots filled with payments waiting out timeouts and retries, so it mostly
+# stopped sending, and what got through was answered after 2-3 s: counting only errors made the
+# outage look 10 s shorter than it was (VM, 12 Nov).
+SLOW_MS = TARGETS["p99_ms"]
+
+
 def affected(row):
-    """A payment a client would notice: no answer, an error, or scored without history."""
-    return row["status"] != "200" or row.get("degraded") == "True"
+    """A payment a client would notice: no answer, an error, scored without history, or slower
+    than the p99 target."""
+    return (row["status"] != "200" or row.get("degraded") == "True"
+            or float(row["latency_ms"]) > SLOW_MS)
 
 
 def analyse(folder):
@@ -44,6 +55,7 @@ def analyse(folder):
         "payments": len(rows), "affected_before": sum(map(affected, before)),
         "affected": len(hit), "errors": sum(r["status"] != "200" for r in hit),
         "degraded": sum(r["status"] == "200" and r.get("degraded") == "True" for r in hit),
+        "slow": sum(r["status"] == "200" and r.get("degraded") != "True" for r in hit),
         "back_s": back - killed,                       # Kubernetes: the pod (or node) ready again
         "client_mttr_s": max(0.0, last - killed),      # what clients felt
     }
@@ -56,11 +68,11 @@ def availability(mttr_s, mtbf_hours=MTBF_HOURS):
 
 def report(root, mtbf_hours=MTBF_HOURS):
     runs = [analyse(d) for d in sorted(Path(root).iterdir()) if (d / "events.json").exists()]
-    out = [("| Run | Killed | Payments | Noticed (errors + degraded) | Before the kill | Back in (s) |"
+    out = [("| Run | Killed | Payments | Noticed (errors + degraded + slow) | Before the kill | Back in (s) |"
            " Clients felt it for (s) |"), "|" + "---|" * 7]
     for r in runs:
         out.append(f"| {r['run']} | {r['target']} | {r['payments']:,} | {r['affected']} "
-                   f"({r['errors']} + {r['degraded']}) | {r['affected_before']} | {r['back_s']:.0f} | "
+                   f"({r['errors']} + {r['degraded']} + {r['slow']}) | {r['affected_before']} | {r['back_s']:.0f} | "
                    f"{r['client_mttr_s']:.1f} |")
     out += ["", (f"Availability = MTBF / (MTBF + MTTR), MTTR = what clients felt (mean over runs), "
             f"MTBF assumed {mtbf_hours / 24:.0f} days per kind (and, to show the sensitivity, 7 days):"),
