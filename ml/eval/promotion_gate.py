@@ -13,8 +13,9 @@ Run it before `make promote`. Exit code 0 = promote, 1 = keep the current model.
                                      --current models/fraud-lgbm-v1
 Writes docs/results/promotion_gate.md.
 
-Note: a model retrained on recent days (as in E3) has seen days 92-109, so for it the golden
-set must be a newer window it was not trained on.
+Which days: the candidate's own test days, from its meta.json (`info.test_days`): 92-109 for
+v1, a later window for a model retrained on recent days (as in E3), which has seen 92-109.
+Both models are always judged on the same days. --test-days overrides it.
 """
 
 import argparse
@@ -34,11 +35,28 @@ TIMING_SAMPLE = 500
 WARM_UP = 50
 
 
-def golden_set(df):
-    """Test days 92-109: the second half of the validation period."""
-    val = df[df["split"] == "val"]
-    mid_day = val["TransactionDT"].min() // 86400 + 18
-    return val[val["TransactionDT"] // 86400 >= mid_day]
+GOLDEN_DAYS = (92, 109)
+
+
+def parse_days(text):
+    """'92-109' -> (92, 109)."""
+    first, last = (int(x) for x in str(text).split("-"))
+    if first > last:
+        raise ValueError(f"days {text}: first day after last day")
+    return first, last
+
+
+def held_out_days(model):
+    """The days a model was held out on (its meta.json info.test_days), else 92-109."""
+    days = (model.meta.get("info") or {}).get("test_days")
+    return parse_days(days) if days else GOLDEN_DAYS
+
+
+def golden_set(df, days=GOLDEN_DAYS):
+    """The payments on days first-last (inclusive), by TransactionDT day."""
+    first, last = days
+    day = df["TransactionDT"] // 86400
+    return df[(day >= first) & (day <= last)]
 
 
 def measure(model, golden, sample=TIMING_SAMPLE, seed=0):
@@ -82,13 +100,16 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--candidate", required=True, help="folder of the model to promote")
     p.add_argument("--current", required=True, help="folder of the live model")
+    p.add_argument("--test-days", help="e.g. 169-182; default: the candidate's own test days")
     args = p.parse_args()
 
     candidate_model = FraudModel.load(args.candidate)
     current_model = FraudModel.load(args.current)
+    days = parse_days(args.test_days) if args.test_days else held_out_days(candidate_model)
     print("loading data and building features...")
-    golden = golden_set(load_data())
-    print(f"golden set: {len(golden):,} payments, {int(golden[TARGET].sum()):,} frauds")
+    golden = golden_set(load_data(), days)
+    print(f"test days {days[0]}-{days[1]}: {len(golden):,} payments, "
+          f"{int(golden[TARGET].sum()):,} frauds")
 
     cand, curr = measure(candidate_model, golden), measure(current_model, golden)
     passed, rows = check(cand, curr)
@@ -105,7 +126,7 @@ def main():
     RESULTS.mkdir(parents=True, exist_ok=True)
     with open(RESULTS / "promotion_gate.md", "w") as f:
         f.write("# Promotion gate\n\n")
-        f.write(f"Golden set: test days 92-109 ({len(golden):,} payments). Rules: PR-AUC at "
+        f.write(f"Test days {days[0]}-{days[1]} ({len(golden):,} payments). Rules: PR-AUC at "
                 f"least +{MIN_GAIN} over the current model, score + reasons p95 at most "
                 f"{MAX_MS} ms (one payment at a time, one thread), flagged share within "
                 f"{REVIEW_CAPACITY:.0%}.\n\n")
