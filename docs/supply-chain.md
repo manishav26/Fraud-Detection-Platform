@@ -17,6 +17,9 @@ scans on every push, the same ones on the laptop. Test: ST10 (CI green, no unwai
   where it really lives: in the images, by Trivy.
 - **Only fixable image findings fail the build** (`--ignore-unfixed`). One with no fix released
   can't be acted on; it shows in the report but doesn't block.
+- **CI's own actions are pinned to full commits** (`.github/workflows/ci.yml`, the release in a
+  comment): a tag can be moved to different code, a commit can't. The repository refuses unpinned
+  actions (since 12 Nov), and `tests/test_ci.py` checks every one.
 - **Waivers are named, per file, with a reason:** `.trivyignore.yaml`, `.gitleaks.toml` (none
   needed so far). A waiver covers only the files it lists.
 
