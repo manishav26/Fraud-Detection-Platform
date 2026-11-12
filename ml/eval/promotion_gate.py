@@ -52,6 +52,29 @@ def held_out_days(model):
     return parse_days(days) if days else GOLDEN_DAYS
 
 
+def days_seen(model):
+    """[(what, (first, last))]: the days a model was trained and calibrated on (its meta.json)."""
+    info = model.meta.get("info") or {}
+    return [(what, parse_days(info[key])) for what, key in
+            (("trained", "train_days"), ("calibrated", "calibration_days")) if info.get(key)]
+
+
+def unseen(days, candidate, current):
+    """The fourth check: the test days must be unseen by both models. The test days come from the
+    candidate's own meta.json, so without this a candidate could name days it trained on, or easy
+    ones, and be judged on them (threat 10). A candidate that doesn't record its own training and
+    calibration days can't show this, so it fails; the current model is checked when it records
+    them (v1 does)."""
+    first, last = days
+    problems = [f"{name} {what} on {a}-{b}"
+                for name, model in (("candidate", candidate), ("current", current))
+                for what, (a, b) in days_seen(model) if a <= last and first <= b]
+    if len(days_seen(candidate)) < 2:
+        problems.append("candidate doesn't record its training and calibration days")
+    return {"check": "unseen", "value": "; ".join(problems) or f"days {first}-{last}",
+            "rule": "not trained or calibrated on", "passed": not problems}
+
+
 def golden_set(df, days=GOLDEN_DAYS):
     """The payments on days first-last (inclusive), by TransactionDT day."""
     first, last = days
@@ -113,10 +136,12 @@ def main():
 
     cand, curr = measure(candidate_model, golden), measure(current_model, golden)
     passed, rows = check(cand, curr)
+    rows.append(unseen(days, candidate_model, current_model))
+    passed = passed and rows[-1]["passed"]
     models = pd.DataFrame([{"model": "candidate", "folder": args.candidate, **cand},
                            {"model": "current", "folder": args.current, **curr}]).round(4)
     checks = pd.DataFrame(rows)
-    verdict = ("PROMOTE: the candidate passes all three checks." if passed else
+    verdict = ("PROMOTE: the candidate passes every check." if passed else
                "KEEP the current model: " + ", ".join(r["check"] for r in rows
                                                       if not r["passed"]) + " failed.")
     print("\n", models.to_string(index=False))
@@ -129,7 +154,7 @@ def main():
         f.write(f"Test days {days[0]}-{days[1]} ({len(golden):,} payments). Rules: PR-AUC at "
                 f"least +{MIN_GAIN} over the current model, score + reasons p95 at most "
                 f"{MAX_MS} ms (one payment at a time, one thread), flagged share within "
-                f"{REVIEW_CAPACITY:.0%}.\n\n")
+                f"{REVIEW_CAPACITY:.0%}, test days unseen by both models.\n\n")
         f.write(f"**{verdict}**\n\n")
         f.write(models.to_markdown(index=False) + "\n\n")
         f.write(checks.to_markdown(index=False) + "\n")

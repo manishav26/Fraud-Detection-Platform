@@ -17,4 +17,4 @@ Test days 169-182: PR-AUC 0.5201, recall @ 1% FPR 0.4545, flagged 2.27%.
 | model.txt | `18cb0bd755427a8abbbb9cce55e3ba46d20b2bce5a5075d332f0bacff4109d71` |
 | meta.json | `ff6994bb525227292be9fae88cae233a4ecff8456433cb1264b8154131f6891c` |
 
-Compare with the live model: `python -m ml.eval.promotion_gate --candidate /Users/manishav/Desktop/CMPE 272/Project/Fraud-Detection-Platform/models/fraud-lgbm-v2 --current models/fraud-lgbm-v1` (judged on the test days above).
+Compare with the live model: `python -m ml.eval.promotion_gate --candidate models/fraud-lgbm-v2 --current models/fraud-lgbm-v1` (judged on the test days above).
