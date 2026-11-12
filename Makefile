@@ -1,4 +1,4 @@
-.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-siem k8s-siem-check k8s-kafka-check k8s-st11 k8s-st5 k8s-st6 k8s-st12 k8s-reset-data pseudonym k8s-pseudonym k8s-probe-attack k8s-spark-parity k8s-spark-throughput k8s-spark-logs spark-smoke k8s-linkerd k8s-health st4-db st2 st7 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-consistency k8s-ramp k8s-scaling k8s-failure k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
+.PHONY: keys token up down test lint scan logs topics schema db-schema st1 k8s-st1 k8s-st2 k8s-st3 k8s-st4 k8s-st4-db k8s-secrets-check k8s-siem k8s-siem-check k8s-kafka-check k8s-st11 k8s-st5 k8s-st6 k8s-st12 k8s-reset-data pseudonym k8s-pseudonym k8s-probe-attack k8s-spark-parity k8s-spark-throughput k8s-spark-logs spark-smoke k8s-linkerd k8s-health st4-db st2 st7 st14 verify-audit k8s-verify-audit k8s-st8-tamper k8s-st8-restore k8s-alert-stats k8s-cases st8-tamper st8-restore alert-stats mlflow-check register promote rollback model-history st9-tamper cassandra-speed backfill read-timing replay load stall-probe cluster cluster-down k8s-up k8s-secrets k8s-password k8s-apply k8s-update k8s-resilience k8s-consistency k8s-ramp k8s-scaling k8s-failure k8s-down k8s-mlflow-check k8s-register k8s-promote k8s-rollback k8s-model-history k8s-backfill k8s-read-timing k8s-st9-tamper k8s-mlflow k8s-grafana k8s-prometheus snapshot k8s-snapshot k8s-gc-pauses baseline
 keys:
 	./scripts/gen_keys.sh
 
@@ -88,6 +88,10 @@ st2:
 # On the VM (docs/results/security.md, ST7): make st7 URL=http://localhost:8080 ST7_SECONDS=60 ST7_REPEATS=4
 ST7_SECONDS ?= 20
 ST7_REPEATS ?= 2
+# ST14 (offline): 5 forced drift alarms in a day -> 1 retrain, the rest refused with a reason
+st14:
+	python security/tests/st14_retrain_guard.py
+
 st7:
 	python security/tests/st7_flood.py --url $(URL) --seconds $(ST7_SECONDS) --repeats $(ST7_REPEATS)
 

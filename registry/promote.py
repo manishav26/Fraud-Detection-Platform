@@ -69,14 +69,19 @@ class AdminApi:
 
 def run_gate(candidate_folder, current_folder, against):
     """Manisha's promotion gate (ml/eval/promotion_gate.py): candidate vs the live model on the
-    golden days. Needs data/processed/ on this laptop, and takes a few minutes."""
+    candidate's own test days. Needs data/processed/ on this laptop, and takes a few minutes."""
     from ml.eval import promotion_gate as gate  # pandas, scikit-learn: only when promoting
 
     print(f"promotion gate: candidate vs {against}; loading data and building features...")
-    golden = gate.golden_set(gate.load_data())
-    cand = gate.measure(FraudModel.load(candidate_folder), golden)
-    curr = gate.measure(FraudModel.load(current_folder), golden)
+    candidate, current = FraudModel.load(candidate_folder), FraudModel.load(current_folder)
+    # The candidate's own test days (Manisha, #13): a retrained model is judged on days after
+    # its training, and both models must not have seen them (the `unseen` check)
+    days = gate.held_out_days(candidate)
+    golden = gate.golden_set(gate.load_data(), days)
+    cand, curr = gate.measure(candidate, golden), gate.measure(current, golden)
     passed, rows = gate.check(cand, curr)
+    rows.append(gate.unseen(days, candidate, current))
+    passed = passed and rows[-1]["passed"]
     for r in rows:
         print(f"  {r['check']:7} {r['value']:22} rule {r['rule']:10} "
               f"{'pass' if r['passed'] else 'FAIL'}")

@@ -9,6 +9,8 @@ pyjwt[crypto]==2.15.1
 cryptography==50.0.2
 numpy==2.4.6
 pandas==3.1.0
+# pandas' to_markdown needs it: the ML scripts write their results tables with it (the gate, parity, drift)
+tabulate==0.10.0
 lightgbm==4.7.0
 scikit-learn==1.9.1
 xgboost==2.1.4

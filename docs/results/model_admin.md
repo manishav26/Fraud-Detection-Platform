@@ -78,6 +78,11 @@ explanations, not the model call, are what is slow on this CPU. For the gate, ei
 on the machine the platform runs on and set the limit from that, or keep 5 ms as the target and
 treat the laptop as the limit. To decide with Manisha.
 
+**Decided (12 Nov, with Manisha): relative.** The gate now times both models in the same run on
+the same machine and allows the candidate at most 1.2 times the live model's p95. On this laptop
+v1 and v2 both take ~11 ms (1.00x), so `fast` passes here as it does on Manisha's (~3 ms); a
+candidate that is really slower still fails on either.
+
 ## Known limit (closed in week 5)
 
 Anything that could reach Redpanda could publish to `model.events` directly, skipping the audit

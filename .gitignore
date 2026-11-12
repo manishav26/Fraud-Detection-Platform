@@ -40,3 +40,6 @@ deploy/kong/kong.yml
 .pytest_cache/
 .ruff_cache/
 .venv/
+
+# Schemathesis (ST5) keeps a local cache here, with this folder's path in it
+.schemathesis/
