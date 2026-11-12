@@ -94,6 +94,13 @@ NetworkPolicies still let only Prometheus reach 4191, and the proxies' own probe
 `/ready` on 4191) keep Linkerd's default handling. `tests/test_k8s_manifests.py` checks that no
 pod skips its proxy on 4191.
 
+Applied on the VM: 19 of 20 proxies answered at once, and ST3 still passed (outside the mesh 403,
+the real ingest pod 200). The one still refused was Prometheus's own proxy, with
+`client.ip` its own pod address and `client.tls=None`: a pod's call to its own address doesn't
+get mTLS. Its proxy would count only Grafana's queries, not traffic between our services, so the
+`linkerd-proxy` job leaves that one pod out (`deploy/prometheus/prometheus.k8s.yml`, tested)
+rather than open its admin port to callers without an identity.
+
 ## Limits
 
 - **A new pod in the namespace gets an identity automatically** (the namespace's `default`

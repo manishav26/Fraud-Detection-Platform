@@ -256,6 +256,19 @@ def test_prometheus_reads_the_proxies_metrics_through_its_own_proxy():
             assert "4191" not in skipped, d["metadata"]["name"]
 
 
+def test_prometheus_reads_every_proxy_but_its_own():
+    """A pod's call to its own address gets no mTLS, so Prometheus's own proxy refuses it (12 Nov):
+    that one target is dropped, no other."""
+    config = yaml.safe_load((BASE.parents[1] / "prometheus" / "prometheus.k8s.yml").read_text())
+    job = next(j for j in config["scrape_configs"] if j["job_name"] == "linkerd-proxy")
+    rules = job["relabel_configs"]
+    assert rules[0] == {"source_labels": ["__meta_kubernetes_pod_container_port_name"],
+                        "action": "keep", "regex": "linkerd-admin"}
+    drops = [r for r in rules if r.get("action") == "drop"]
+    assert drops == [{"source_labels": ["__meta_kubernetes_pod_label_app"], "action": "drop",
+                      "regex": "prometheus"}]
+
+
 def test_each_port_of_a_shared_pod_names_exactly_its_callers():
     # Through the mesh every connection arrives on 4143, so for a pod whose ports have different
     # callers (Redpanda, Kong) the mesh checks the caller's identity per port
