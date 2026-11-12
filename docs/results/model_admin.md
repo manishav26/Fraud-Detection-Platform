@@ -139,14 +139,37 @@ timed on the same payments in alternating order. On the real models, 4 runs whil
 load varied: 9.97-13.88 ms in absolute terms, **0.97-1.02x** as a ratio. In steps 3 and 4: 0.99x
 and 0.96x.
 
-### Note: no rollback on the VM
+### Rollback on the VM (the demo's flow, rehearsed 12 Nov)
 
-`GET /v1/model` answers `previous: null`: a rollback goes back to the version live before *on
-record*, and the pinned model was never promoted on this cluster (`services/model-admin-svc/
-app/rules.py`: "fewer than two model changes are on record"). On the laptop cluster (8 Nov), step 1 of
-"The demo flow" recorded the pinned model through the audited path first, which is what made rollback
-possible there. For the demo: do that first (register tuned v1 and promote it with an override
-naming why), then promote v2, and rollback works.
+After v2's promotion, `GET /v1/model` answered `previous: null`: a rollback goes back to the
+version live before *on record*, and the pinned model was never promoted on this cluster
+(`services/model-admin-svc/app/rules.py`: "fewer than two model changes are on record"). So tuned
+v1 was registered (**version 2**: `model.txt 535eb73c…`, `meta.json abd0c05b…`), promoted, and
+rolled back, with v2 live before and after:
+
+| Step | Command | Result |
+|---|---|---|
+| 1 | `make k8s-promote VERSION=2 REASON="demo: put the older model back"` | gate vs v2: better **-0.4296 FAIL**, fast 0.97x, safe 1.33%, **unseen FAIL** ("current trained on 95-140"). Not promoted |
+| 2 | the same with `OVERRIDE="demo: an older model needs a written override"` | hashes checked, signed on the laptop. Live: v1 (`535eb73c`) |
+| 3 | `make k8s-rollback REASON="v1 is worse than v2; back to v2"` | no gate. Live: **v2** (`18cb0bd7`) |
+
+The audit log (`make k8s-model-history`), newest first:
+
+| Row | Time (UTC) | Action | Version | Gate | Reason |
+|---|---|---|---|---|---|
+| 4519 | 22:41:03 | model_rolled_back | 1 (`fraud-lgbm-v2-18cb0bd7`) | none (rollback) | v1 is worse than v2; back to v2 |
+| 4518 | 22:37:51 | model_promoted | 2 (`fraud-lgbm-v1-535eb73c`) | keep: -0.4296 PR-AUC, 10.68 ms, 1.33% flagged | demo: an older model needs a written override |
+| 4164 | 20:42:26 | model_promoted | 1 (`fraud-lgbm-v2-18cb0bd7`) | keep: +0.0651 PR-AUC, 13.21 ms, 2.27% flagged | flagged share 2.27% vs 2% capacity; accepted for the demo, analysts informed |
+
+All by `admin`; afterwards `previous: "2"`.
+
+**The -0.4296 is not v1's real deficit.** The gate judges on the candidate's own test days, v1's
+92-109, and v2 was trained on 95-140, so it had seen those payments. The `unseen` check says
+exactly that: the comparison itself wasn't fair. v1 vs v2 on days neither saw (169-182, v2's
+test days) is the +0.0651 above. Both models were also timed together (0.97x, 1.00x).
+
+**For the demo** the same three commands repeat as they are: v2 is live, so promoting v1 is
+refused and overridden, and the rollback returns to v2.
 
 ## Known limit (closed in week 5)
 

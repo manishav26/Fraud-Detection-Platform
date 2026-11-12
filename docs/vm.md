@@ -148,9 +148,9 @@ That kubeconfig is the cluster's admin login: keep it at mode 600 and delete it 
 
 On a new cluster, the first promotion records the pinned model (`docs/mlflow.md`, "A new
 cluster: record the pinned model first"), or there is nothing to roll back to. The VM's first
-promotion (12 Nov) was v2 directly, so the VM has no rollback yet. The demo (18 Nov) runs on the
-VM: to show a rollback there, first register tuned v1 (`models/fraud-lgbm-v1`) and promote it
-with an override naming why; a rollback then goes back to v2.
+promotion (12 Nov) was v2 directly, so at first it had no rollback. The demo (18 Nov) runs on the
+VM, so tuned v1 was registered there (version 2), promoted with an override and rolled back to
+v2: the flow works and is on record (`docs/results/model_admin.md`, "Rollback on the VM").
 
 ## 9. Every day
 
