@@ -146,6 +146,11 @@ laptop. So the laptop's kubectl is pointed at the VM's cluster through a tunnel,
    ```
 That kubeconfig is the cluster's admin login: keep it at mode 600 and delete it at teardown.
 
+On a new cluster, the first promotion records the pinned model (`docs/mlflow.md`, "A new
+cluster: record the pinned model first"), or there is nothing to roll back to. The VM's first
+promotion (12 Nov) was v2 directly, so the VM has no rollback; it stays so, as the laptop
+cluster is the demo's.
+
 ## 9. Every day
 
 - **Stop the instance when idle** (EC2 -> Instance state -> Stop). The disk keeps everything, and

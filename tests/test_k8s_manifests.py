@@ -246,6 +246,16 @@ def test_no_pod_opts_out_of_the_mesh():
             assert notes.get("linkerd.io/inject") != "disabled", d["metadata"]["name"]
 
 
+def test_prometheus_reads_the_proxies_metrics_through_its_own_proxy():
+    """all-authenticated covers each proxy's admin port (4191) too: a scrape that skipped
+    Prometheus's proxy came without a mesh identity and every one was refused, 403 (12 Nov)."""
+    for d in DOCS:
+        if d["kind"] in ("Deployment", "StatefulSet"):
+            notes = d["spec"]["template"]["metadata"].get("annotations", {})
+            skipped = notes.get("config.linkerd.io/skip-outbound-ports", "").split(",")
+            assert "4191" not in skipped, d["metadata"]["name"]
+
+
 def test_each_port_of_a_shared_pod_names_exactly_its_callers():
     # Through the mesh every connection arrives on 4143, so for a pod whose ports have different
     # callers (Redpanda, Kong) the mesh checks the caller's identity per port
