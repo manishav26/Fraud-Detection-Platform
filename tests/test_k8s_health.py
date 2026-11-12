@@ -79,3 +79,18 @@ def test_k8s_up_ends_with_the_health_check():
     up = (ROOT / "scripts" / "k8s_up.sh").read_text()
     assert "scripts/k8s_health.py" in up
     assert up.index("scripts/k8s_health.py") > up.index("wait_for mlflow")
+
+
+def test_an_old_pod_shutting_down_after_a_rollout_is_not_a_problem():
+    """make k8s-up's check ran as the rollouts finished and failed on the old MLflow pod, still
+    terminating and no longer ready (12 Nov)."""
+    old = pod("mlflow-old", ready="False", proxy=False)
+    old["metadata"]["deletionTimestamp"] = "2026-11-12T22:01:00Z"
+    pods = {"items": [old, pod("mlflow-new")]}
+    assert h.not_ready(pods) == [] and h.unmeshed(pods) == []
+    assert h.pod_per_node(pods) == {"k3d-fraud-agent-0": "mlflow-new"}
+
+
+def test_a_pod_not_being_deleted_is_still_judged():
+    pods = {"items": [pod("mlflow-new", ready="False")]}
+    assert h.not_ready(pods) == ["mlflow-new (Running, ready=False)"]
