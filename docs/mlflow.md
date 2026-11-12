@@ -51,6 +51,29 @@ make rollback   the same for the version live before the current one, without th
 Until week 4, `make promote` published to `model.events` itself. Now every change goes through
 model-admin-svc, so each one has an audit row naming the admin who sent it.
 
+### A new cluster: record the pinned model first
+
+A new cluster serves the model pinned in scoring's image (`models/fraud-lgbm-v1`), and no audit
+row says so. A rollback goes back to the version live before *on record*, so after the first
+promotion there is nothing to go back to (`previous: null`; seen on the VM, 12 Nov,
+`docs/results/model_admin.md`). The cluster can't record its own starting model: only the
+laptop holds the signing key. So the first thing done on a new cluster, before any other model
+goes live (on the VM, with `KUBECONFIG=~/.kube/fraud-vm` in front, `docs/vm.md` §8):
+```bash
+make k8s-register MODEL_FOLDER=models/fraud-lgbm-v1
+```
+```bash
+make k8s-promote VERSION=<the version it printed> OVERRIDE="record the pinned model as live through the audited path"
+```
+The gate compares the pinned model with itself (+0.0000 PR-AUC), so it says keep: the override is
+honest, and its reason says why. The hashes shown must be v1's (`model.txt` and `meta.json` in
+`models/fraud-lgbm-v1/manifest.json`). Scoring keeps serving the same model, and from then on
+every change, the first rollback included, has a version to go back to. Once per cluster: the
+audit log is in Postgres, on its own volume, so restarts, `make k8s-up` and `make k8s-reset-data` keep it;
+after `make k8s-down` (which deletes the namespace and its volumes) or on a new cluster, it is
+needed again. `make k8s-model-history` shows whether
+it was done.
+
 ## Admin promote and rollback (week 4, step 6)
 
 **The signing key stays on the admin's laptop.** model-admin-svc has only the public key: it can
@@ -81,7 +104,7 @@ What model-admin-svc checks before publishing (`services/model-admin-svc/app/rul
 - **Check and record happen in one transaction, holding the audit chain's lock**, so two
   promotions sent at once can't both pass the sequence check.
 - **The gate runs on the laptop, before signing**, because it needs the training data and both
-  models (`ml/eval/promotion_gate.py`: +0.01 PR-AUC, score + reasons p95 at most 1.2 times the live model's on the same machine, at most 2%
+  models (`ml/eval/promotion_gate.py`: +0.01 PR-AUC, score + reasons p95 at most 1.2 times the live model's, both timed together on the same machine, at most 2%
   flagged). Its verdict and numbers are signed into the message, so the audit row shows them and
   an override can't be hidden. `OVERRIDE="why"` promotes past a "keep" and records why.
 - **A rollback skips the gate:** it is the way back when a model goes wrong, and the version it

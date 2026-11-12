@@ -51,12 +51,13 @@ spec:
             - {name: metrics, containerPort: 8000}
           # The metrics server answers as soon as the job starts; Spark needs a minute more. If the
           # streaming query stops, the process exits and Kubernetes restarts it from the checkpoint.
+          # HTTP, so the job's own server answers (a TCP check was answered by the Linkerd proxy)
           startupProbe:
-            tcpSocket: {port: 8000}
+            httpGet: {path: /healthz, port: 8000}
             periodSeconds: 5
             failureThreshold: 36
           livenessProbe:
-            tcpSocket: {port: 8000}
+            httpGet: {path: /healthz, port: 8000}
             periodSeconds: 20
             failureThreshold: 6
           volumeMounts:

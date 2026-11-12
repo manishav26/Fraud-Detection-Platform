@@ -45,12 +45,18 @@ spec:
             - {name: proxy, containerPort: 8000}
           volumeMounts:
             - {name: config, mountPath: /kong, readOnly: true}
+          # Kong's own check, inside the pod: a TCP check on 8000 was answered by the Linkerd proxy,
+          # Kong or not (docs/mtls.md, "Probes")
           readinessProbe:
-            tcpSocket: {port: 8000}
+            exec:
+              command: ["kong", "health"]
             periodSeconds: 5
+            timeoutSeconds: 5
           livenessProbe:
-            tcpSocket: {port: 8000}
+            exec:
+              command: ["kong", "health"]
             periodSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 6
           lifecycle:
             preStop: {sleep: {seconds: 5}}   # finish requests already on their way (docs/k8s.md)

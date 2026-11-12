@@ -89,7 +89,7 @@ three, so they run only on the VM (`docs/vm.md`): `OVERLAY=vm make k8s-up` appli
 | Choice | Design | Why |
 |---|---|---|
 | Nodes | 3, started one at a time (`OrderedReady`) | Cassandra refuses to bootstrap two nodes at once |
-| Ready when | `nodetool statusbinary` says `running`, which is after the node has joined | the base's TCP check on 9042 is answered by the Linkerd proxy before Cassandra is up, so the next node could start too early |
+| Ready when | `nodetool statusbinary` says `running`, which is after the node has joined | a TCP check on 9042 is answered by the Linkerd proxy before Cassandra is up, so the next node could start too early. Since 12 Nov the base has this probe too (`docs/mtls.md`, "Probes") |
 | One per machine | required anti-affinity across the k3d nodes (`make cluster AGENTS=3`) | "a node fails" is a whole k3d node stopping, and loses one copy, never two |
 | Finding each other | headless Service `cassandra-peers` (`cassandra-0.cassandra-peers...` as the seed); clients keep the `cassandra` Service | Cassandra's standard way of joining; the driver learns all three and routes each read to a node holding that card |
 | Copies | `fraud` and `system_auth` at 3 (`CASSANDRA_RF=3`), then `nodetool repair -full system_auth` | Cassandra keeps logins at 1 copy by default: losing that node would fail every login. `create_schema.sh` refuses more copies than nodes up |

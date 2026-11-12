@@ -36,10 +36,16 @@ spec:
             - {name: cql, containerPort: 9042}
           volumeMounts:
             - {name: data, mountPath: /var/lib/cassandra}
+          # Ready only when Cassandra itself serves clients (on 3 nodes: after it has joined the
+          # ring). A TCP check on 9042 was answered by the Linkerd proxy as soon as the proxy was
+          # up, Cassandra or not (docs/mtls.md, "Probes")
           readinessProbe:
-            tcpSocket: {port: 9042}
-            initialDelaySeconds: 30
-            periodSeconds: 5
+            exec:
+              command: ["sh", "-c", "[ \"$(nodetool statusbinary)\" = running ]"]
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 15
+            failureThreshold: 3
           resources:
             requests: {cpu: 500m, memory: 1500Mi}
             limits: {memory: 2Gi}

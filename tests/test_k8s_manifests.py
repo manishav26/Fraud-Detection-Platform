@@ -246,6 +246,29 @@ def test_no_pod_opts_out_of_the_mesh():
             assert notes.get("linkerd.io/inject") != "disabled", d["metadata"]["name"]
 
 
+def test_prometheus_reads_the_proxies_metrics_through_its_own_proxy():
+    """all-authenticated covers each proxy's admin port (4191) too: a scrape that skipped
+    Prometheus's proxy came without a mesh identity and every one was refused, 403 (12 Nov)."""
+    for d in DOCS:
+        if d["kind"] in ("Deployment", "StatefulSet"):
+            notes = d["spec"]["template"]["metadata"].get("annotations", {})
+            skipped = notes.get("config.linkerd.io/skip-outbound-ports", "").split(",")
+            assert "4191" not in skipped, d["metadata"]["name"]
+
+
+def test_prometheus_reads_every_proxy_but_its_own():
+    """A pod's call to its own address gets no mTLS, so Prometheus's own proxy refuses it (12 Nov):
+    that one target is dropped, no other."""
+    config = yaml.safe_load((BASE.parents[1] / "prometheus" / "prometheus.k8s.yml").read_text())
+    job = next(j for j in config["scrape_configs"] if j["job_name"] == "linkerd-proxy")
+    rules = job["relabel_configs"]
+    assert rules[0] == {"source_labels": ["__meta_kubernetes_pod_container_port_name"],
+                        "action": "keep", "regex": "linkerd-admin"}
+    drops = [r for r in rules if r.get("action") == "drop"]
+    assert drops == [{"source_labels": ["__meta_kubernetes_pod_label_app"], "action": "drop",
+                      "regex": "prometheus"}]
+
+
 def test_each_port_of_a_shared_pod_names_exactly_its_callers():
     # Through the mesh every connection arrives on 4143, so for a pod whose ports have different
     # callers (Redpanda, Kong) the mesh checks the caller's identity per port
@@ -411,13 +434,52 @@ def test_three_nodes_one_per_machine_started_one_at_a_time():
     assert {"name": "intra-node", "containerPort": 7000} in c["ports"]
 
 
-def test_a_node_is_ready_only_when_cassandra_serves_clients():
-    """Not the base's TCP check, which the Linkerd proxy answers before Cassandra is up: the
-    next node must not start bootstrapping while this one still is."""
+PROBES = ("startupProbe", "readinessProbe", "livenessProbe")
+
+
+def probes_of(docs):
+    """{(workload, container, probe kind): probe} for every container of every workload."""
+    return {(d["metadata"]["name"], c["name"], kind): c[kind]
+            for d in docs if d and d["kind"] in ("Deployment", "StatefulSet")
+            for c in d["spec"]["template"]["spec"]["containers"] for kind in PROBES if kind in c}
+
+
+def test_no_probe_is_answered_by_the_linkerd_proxy():
+    """Every pod is meshed, and a TCP probe succeeds as soon as the Linkerd proxy accepts the
+    connection, app or not: Redpanda's passed although the mesh refused every one (12 Nov,
+    docs/mtls.md "Probes"). So probes are HTTP (the app answers through the proxy) or run inside
+    the container (exec), never tcpSocket, in the base and in the VM's patches."""
+    docs = DOCS + [d for ds in VM_DOCS.values() for d in ds]
+    tcp = [key for key, probe in probes_of(docs).items() if "tcpSocket" in probe]
+    assert tcp == []
+
+
+def test_each_former_tcp_probe_now_asks_the_app_itself():
+    probes = probes_of(DOCS)
+    command = {key[0]: " ".join(p["exec"]["command"]) for key, p in probes.items() if "exec" in p}
+    assert "localhost:9644/v1/status/ready" in command["redpanda"]
+    assert "nodetool statusbinary" in command["cassandra"]
+    assert "localhost:9000/health" in command["objectstore"]
+    assert command["kong"] == "kong health"
+    assert probes[("feature-job", "feature-job", "livenessProbe")]["httpGet"]["path"] == "/healthz"
+
+
+def test_a_cassandra_node_is_ready_only_when_it_serves_clients():
+    """On the VM the next node must not start bootstrapping while this one still is: the base's
+    readiness (nodetool) now says so, and the VM's patch no longer replaces it."""
     [sts] = VM_DOCS["cassandra-3-nodes.yaml"]
-    probe = sts["spec"]["template"]["spec"]["containers"][0]["readinessProbe"]
-    assert probe["$patch"] == "replace" and "tcpSocket" not in probe
+    assert "readinessProbe" not in sts["spec"]["template"]["spec"]["containers"][0]
+    [probe] = [p for (w, _, k), p in probes_of(DOCS).items() if w == "cassandra" and k == "readinessProbe"]
     assert "nodetool statusbinary" in " ".join(probe["exec"]["command"])
+
+
+@pytest.mark.skipif(shutil.which("kubectl") is None, reason="needs kubectl to build the overlays")
+@pytest.mark.parametrize("overlay", ["base", "vm"])
+def test_no_built_overlay_has_a_tcp_probe(overlay):
+    built = subprocess.run(["kubectl", "kustomize", str(BASE.parent / overlay)],
+                           capture_output=True, text=True, check=True).stdout
+    probes = probes_of(list(yaml.safe_load_all(built)))
+    assert probes and [k for k, p in probes.items() if "tcpSocket" in p] == []
 
 
 def test_peers_find_each_other_and_a_drain_takes_one_node_at_most():

@@ -705,7 +705,7 @@
       "id": 18,
       "type": "timeseries",
       "title": "Mesh: new connections per second, encrypted or not",
-      "description": "Connections each pod's Linkerd proxy accepted (docs/mtls.md). mTLS: from another pod in the mesh, encrypted and both ends proven. Not mTLS: Kubernetes' probes from the node, and Kong's public port (clients outside the cluster). Anything else unencrypted is worth a look. Cluster only: compose has no mesh.",
+      "description": "Connections each pod's Linkerd proxy accepted (docs/mtls.md). mTLS: from another pod in the mesh, encrypted and both ends proven. Not mTLS: Kubernetes' probes from the node, and Kong's public port (clients outside the cluster). Anything else unencrypted is worth a look. Only connections from callers (peer=src): each proxy's own hand-off to its app, inside the pod, is left out. Cluster only: compose has no mesh.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -739,7 +739,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (app) (rate(tcp_open_total{direction=\"inbound\", tls=\"true\"}[1m]))",
+          "expr": "sum by (app) (rate(tcp_open_total{direction=\"inbound\", peer=\"src\", tls=\"true\"}[1m]))",
           "legendFormat": "{{app}} mTLS"
         },
         {
@@ -748,7 +748,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (app) (rate(tcp_open_total{direction=\"inbound\", tls!=\"true\"}[1m]))",
+          "expr": "sum by (app) (rate(tcp_open_total{direction=\"inbound\", peer=\"src\", tls!=\"true\"}[1m]))",
           "legendFormat": "{{app}} not mTLS"
         }
       ]

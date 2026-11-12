@@ -13,6 +13,7 @@ Exit code 1 if anything is wrong. The checks, in the order to fix them:
      scripts/k8s_linkerd.sh, so this catches older pods)
   4. every pod ready
   5. Cassandra: as many nodes Up/Normal as the StatefulSet has
+Pods being deleted (an old pod finishing after a rollout) are left out of 3 and 4.
 """
 
 import json
@@ -50,6 +51,18 @@ def kubelet_problem(node, error):
             f"docker restart {node}   (one node at a time), then check again")
 
 
+def leaving(pod):
+    """Being deleted: an old pod finishing after a rollout. It is no problem, and judging it
+    would raise an alarm for a pod already replaced: make k8s-up's check, run as the rollouts
+    finished, failed on the old MLflow pod still shutting down (12 Nov)."""
+    return bool(pod["metadata"].get("deletionTimestamp"))
+
+
+def current(pods):
+    """The pods not being deleted."""
+    return [p for p in pods["items"] if not leaving(p)]
+
+
 def has_proxy(pod):
     spec = pod["spec"]
     return any(c["name"] == "linkerd-proxy" for c in spec.get("initContainers", []) + spec["containers"])
@@ -58,15 +71,16 @@ def has_proxy(pod):
 def unmeshed(pods):
     """Pods that should have a Linkerd proxy and don't. A pod that opts out on purpose (ST3's
     probe: linkerd.io/inject: disabled) is not counted."""
-    return [p["metadata"]["name"] for p in pods["items"]
+    return [p["metadata"]["name"] for p in current(pods)
             if (p["metadata"].get("annotations") or {}).get("linkerd.io/inject") != "disabled"
             and p["status"].get("phase") in ("Running", "Pending") and not has_proxy(p)]
 
 
 def not_ready(pods):
-    """Pods that are running but not ready, or not running at all (finished ones aside)."""
+    """Pods that are running but not ready, or not running at all (finished ones and ones being
+    deleted aside)."""
     out = []
-    for p in pods["items"]:
+    for p in current(pods):
         phase = p["status"].get("phase")
         if phase == "Succeeded":
             continue
@@ -84,7 +98,7 @@ def cassandra_up(nodetool_status):
 def pod_per_node(pods):
     """{node: a running pod on it}, to reach each node's kubelet through."""
     out = {}
-    for p in pods["items"]:
+    for p in current(pods):
         node = p["spec"].get("nodeName")
         if node and p["status"].get("phase") == "Running":
             out.setdefault(node, p["metadata"]["name"])
@@ -129,8 +143,10 @@ def main():
                              f"kubectl -n {NS} exec cassandra-0 -c cassandra -- nodetool status"))
 
     if not problems:
-        print(f"healthy: {len(nodes['items'])} nodes, {len(pods['items'])} pods all meshed and ready"
-              f"{f', Cassandra {expected} of {expected} up' if expected else ''}")
+        going = len(pods["items"]) - len(current(pods))
+        print(f"healthy: {len(nodes['items'])} nodes, {len(current(pods))} pods all meshed and ready"
+              f"{f', Cassandra {expected} of {expected} up' if expected else ''}"
+              f"{f' ({going} old pod(s) still shutting down)' if going else ''}")
         return
     print("NOT HEALTHY. Fix in this order, then run make k8s-health again:")
     for i, (problem, fix) in enumerate(problems, 1):

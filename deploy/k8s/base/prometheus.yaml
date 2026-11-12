@@ -43,11 +43,10 @@ spec:
     matchLabels: {app: prometheus}
   template:
     metadata:
+      # No skip-outbound-ports here: it reads every proxy's metrics (4191) through its own proxy,
+      # with its mesh identity, because the namespace's all-authenticated policy covers the
+      # proxies' admin port too. Skipping it made every scrape a 403 (12 Nov, docs/mtls.md)
       labels: {app: prometheus}
-      annotations:
-        # Read proxies' metrics directly, not through its own proxy: measuring the mesh must not
-        # depend on it (docs/mtls.md)
-        config.linkerd.io/skip-outbound-ports: "4191"
     spec:
       serviceAccountName: prometheus
       securityContext:

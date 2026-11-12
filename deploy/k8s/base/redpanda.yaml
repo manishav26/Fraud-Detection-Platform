@@ -42,9 +42,13 @@ spec:
             - {name: kafka-tunnel, containerPort: 9092}   # reached only by kubectl port-forward
           volumeMounts:
             - {name: data, mountPath: /var/lib/redpanda/data}
+          # Asked inside the pod, so it is Redpanda answering: a TCP check on 29092 was answered by
+          # the Linkerd proxy, and refused by the mesh policy, every time (docs/mtls.md, "Probes")
           readinessProbe:
-            tcpSocket: {port: 29092}
+            exec:
+              command: ["curl", "-sf", "-o", "/dev/null", "http://localhost:9644/v1/status/ready"]
             periodSeconds: 5
+            timeoutSeconds: 3
           resources:
             requests: {cpu: 250m, memory: 600Mi}
             limits: {memory: 1Gi}

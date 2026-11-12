@@ -31,7 +31,7 @@ NetworkPolicies, now with the mesh's ports).
 | `config.linkerd.io/default-inbound-policy` | `all-authenticated` | a pod accepts only callers that are in the mesh, so a pod without a mesh identity is refused even where the network rules let it through |
 | `config.linkerd.io/opaque-ports` | 9042, 29092, 5432 | Cassandra, Redpanda and Postgres aren't HTTP: the proxies encrypt them without trying to read them |
 | Kong's port 8000 (`mesh.yaml`) | `all-unauthenticated` | the public entrance: the laptop and payment clients aren't in the mesh. Kong still checks every token |
-| Prometheus: `skip-outbound-ports: 4191` | | it reads each proxy's metrics directly, so measuring the mesh doesn't depend on it |
+| Prometheus: no `skip-outbound-ports` | | it reads each proxy's metrics (4191) through its own proxy, with its mesh identity: `all-authenticated` covers the proxies' admin port too. Until 12 Nov it skipped its proxy on 4191 and every scrape was refused (below, "Seeing it") |
 | `config.linkerd.io/proxy-cpu-request`, `proxy-memory-request`, `proxy-memory-limit` | 10m, 20Mi, 128Mi; no CPU limit | (week 5) without requests the scheduler didn't count the proxies, and scoring's HPA couldn't compute (`docs/k8s.md`). Measured use: 10-14 MiB, 3-10m CPU per proxy |
 
 The settings are read when a pod starts. `make k8s-up` restarts our Deployments anyway, and
@@ -45,7 +45,7 @@ port; the receiving proxy then hands it to the app. A NetworkPolicy that allows 
 port therefore blocks all meshed traffic. So every allowed path is opened on both its app port
 and 4143 (`scripts/gen_network_policies.py`), every pod may reach the Linkerd control plane (its
 certificate, where to send traffic, which callers to accept), and Prometheus may read every
-proxy's metrics (4191). Port 4143 is the same for every service, so the network rules say which
+proxy's metrics (4191, through its own proxy). Port 4143 is the same for every service, so the network rules say which
 pods may talk, and the mesh says which identities may.
 
 **So per-port rules move into the mesh.** Since every meshed connection arrives on 4143, a
@@ -78,6 +78,77 @@ Kong never sends it payments, and it is deleted afterwards.
 - Grafana, "Mesh: callers refused by policy": ST3's refusals show up here.
 - `linkerd viz edges` would show the same per pair, but the viz extension needs about 250 MB
   more on this laptop, so it isn't installed.
+
+**Both Mesh panels were empty until 12 Nov.** On the VM, Prometheus showed all 20 `linkerd-proxy`
+targets down with `403 Forbidden`, and each proxy logged the scrape as refused:
+```
+Request denied server.name=all-authenticated ... client.tls=None(NoClientHello) client.ip=10.42.3.82
+HTTP/1.1 request failed error=unauthorized request on route path="/metrics"
+```
+(10.42.3.82 was the Prometheus pod.) Prometheus had `skip-outbound-ports: 4191`, so it reached
+each proxy's metrics port in plain text, with no mesh identity, and the namespace's
+`all-authenticated` policy applies to the proxy's admin port as well. Its other scrapes already
+went through its proxy, so skipping it bought nothing. Now it reads 4191 through its proxy, as
+Linkerd's own Prometheus does: over mTLS, as the `prometheus` service account. No new policy: the
+NetworkPolicies still let only Prometheus reach 4191, and the proxies' own probes (`/live`,
+`/ready` on 4191) keep Linkerd's default handling. `tests/test_k8s_manifests.py` checks that no
+pod skips its proxy on 4191.
+
+Applied on the VM: 19 of 20 proxies answered at once, and ST3 still passed (outside the mesh 403,
+the real ingest pod 200). The one still refused was Prometheus's own proxy, with
+`client.ip` its own pod address and `client.tls=None`: a pod's call to its own address doesn't
+get mTLS. Its proxy would count only Grafana's queries, not traffic between our services, so the
+`linkerd-proxy` job leaves that one pod out (`deploy/prometheus/prometheus.k8s.yml`, tested)
+rather than open its admin port to callers without an identity.
+
+## Probes
+
+A Kubernetes TCP probe passes when something accepts the connection. In a meshed pod that is
+the Linkerd proxy, which accepts first and only then checks policy and calls the app, so a TCP
+probe tested the proxy, not the app. Once the Mesh panels had data (above), Redpanda's showed it
+plainly: its proxy refused the kubelet's probe on 29092 every few seconds (846 times in 40
+minutes, `Connection denied server.name=redpanda-29092 tls=None(PortSkipped)
+client=10.42.1.1`: the port has its own `Server`, which only our services' identities may use),
+and Redpanda stayed ready all along. Cassandra on the VM had shown the same on 11 Nov
+(`docs/cassandra.md`), fixed then only in the VM's patch.
+
+So no probe is TCP (`tests/test_k8s_manifests.py` checks the base and the built overlays):
+
+| Pod | Was | Now | What answers |
+|---|---|---|---|
+| Our services, MLflow, Grafana, Prometheus | HTTP | HTTP | the app, through its proxy; Linkerd's default policy lets probes in |
+| Postgres | inside the pod (`pg_isready`) | unchanged | Postgres |
+| Feature job | TCP 8000 | HTTP `/healthz` on 8000 | the job's own server |
+| Redpanda | TCP 29092 | inside the pod: `curl -sf localhost:9644/v1/status/ready` | Redpanda (6 ms) |
+| Cassandra | TCP 9042 (the VM: already `nodetool`) | inside the pod: `nodetool statusbinary` = `running` | Cassandra (every 10 s; cost below) |
+| Object store | TCP 9000 | inside the pod: `curl -sf localhost:9000/health` | the store |
+| Kong | TCP 8000 | inside the pod: `kong health` | Kong (every 5 s and 10 s; cost below) |
+
+A probe inside the pod (`exec`) talks to the app over the pod's own loopback, which the mesh
+doesn't touch, so none of this needed a policy loosened: the kubelet still can't reach Redpanda's,
+Cassandra's or Kong's protected ports. The Mesh panel's "not mTLS" line now counts only
+connections from callers (`peer="src"`); what is left there should be the kubelet's HTTP probes
+and Kong's public port.
+
+Applied on the VM (12 Nov): every pod ready (`make k8s-health`), Redpanda's proxy refused nothing
+more (0 in the next minutes; no refusal anywhere in the namespace over 5 minutes), and the only
+plain-text connections from callers were on each proxy's 4191 (its own `/live`, `/ready`) and
+each app's HTTP probe port (8000; Grafana 3000; MLflow 5000). 29092, 9042 and 9000 no longer
+appear: those probes run inside the pods.
+
+**What the two heavier probes cost** (12 Nov, `time` on the command inside the pod):
+
+| Probe | VM (8 cores, idle) | Laptop (busy, swapping) | Per minute on the laptop |
+|---|---|---|---|
+| Cassandra `nodetool statusbinary` (starts a JVM) | 0.8 s | 3-7 s wall, **6-11 CPU-seconds** | about **one core**, all the time, per Cassandra node |
+| Kong `kong health` | 0.2 s | 0.5-0.8 s wall, 0.5-0.7 CPU-seconds | about 0.15 core |
+
+On the laptop the Cassandra probe is a real share of the load: on 12 Nov, with Chrome and other
+apps open, the Mac swapped (6.3 GB) and pods restarted until memory was freed. Kept as is (12 Nov):
+the demo runs on the VM, where it is cheap. Cheaper probes that still ask the app itself were
+measured and work: a connect to `127.0.0.1:9042` inside the Cassandra pod (Cassandra opens it only
+once it serves clients; under 1 ms) and Kong's `GET 127.0.0.1:8100/status/ready` (8 ms of CPU,
+`200 OK`). They are the change to make if the laptop has to carry the platform again.
 
 ## Limits
 

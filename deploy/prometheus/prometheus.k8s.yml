@@ -63,6 +63,11 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_pod_container_port_name]
         action: keep
         regex: linkerd-admin
+      # Not its own proxy: a pod's call to its own address doesn't get mTLS, so all-authenticated
+      # refuses it (403, 12 Nov). It would only count Grafana's queries, not service traffic
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: drop
+        regex: prometheus
       - source_labels: [__meta_kubernetes_pod_label_app]
         target_label: app
       - source_labels: [__meta_kubernetes_pod_name]

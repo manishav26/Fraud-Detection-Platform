@@ -83,6 +83,94 @@ the same machine and allows the candidate at most 1.2 times the live model's p95
 v1 and v2 both take ~11 ms (1.00x), so `fast` passes here as it does on Manisha's (~3 ms); a
 candidate that is really slower still fails on either.
 
+**Then timed together (12 Nov, below).** Timed one model after the other, `fast` still failed v2
+twice on the VM run (1.61x, 1.20x), while the same models gave 0.89-1.01x in repeated runs. The
+gate now interleaves the timings (`measure_pair`).
+
+## Week 5: retrained v2 promoted on the VM, under traffic (12 Nov)
+
+The measurement VM (`docs/vm.md`; 3 Cassandra nodes, 2 scoring pods) with a replay running
+(`make replay LIMIT=20000 SPEED=200`, 1-13 payments/s following the day's pattern). Registered from
+the laptop through a tunnel to the cluster's API (`docs/vm.md` §8): `fraud-lgbm` **version 1** =
+Manisha's v2 (`model.txt 18cb0bd7…`, `meta.json ff6994bb…`, the hashes she sent). The cluster was
+still on the pinned tuned v1 (`535eb73c`): nothing had been promoted on it before.
+
+| Step | Command | Result |
+|---|---|---|
+| 1 | `make k8s-promote VERSION=1` | better +0.0651, **fast 1.61x FAIL**, safe 2.27% FAIL, unseen pass. Not promoted |
+| 2 | the same, laptop quieter | fast **1.20x FAIL** (just over), safe FAIL. Not promoted |
+| 3 | the same, after the timing fix below | better +0.0651, fast 0.99x, **safe 2.27% FAIL**, unseen days 169-182 pass. Not promoted |
+| 4 | `... OVERRIDE="flagged share 2.27% vs 2% capacity; accepted for the demo, analysts informed"` | gate again: fast 0.96x, safe FAIL; hashes checked, signed on the laptop. **Live: v2** |
+
+The audit row (`make k8s-model-history`): row 4164, 20:42:26 UTC, `admin`, `model_promoted`,
+version 1 (`fraud-lgbm-v2-18cb0bd7`), gate `passed: false` (+0.0651 PR-AUC, 13.21 ms, 2.27%
+flagged), the override as the reason, both file hashes, sequence 1794516146164. Prometheus then
+showed **both scoring pods** reporting `fraud-lgbm-v2-18cb0bd7`.
+
+**The switch under traffic:** requests, decisions and Kong's 200s carry straight through 12:42 (no
+dip), 5xx stays at 0%, ingest p95 ~24 ms throughout. The Live model panel ends `v1-535eb73c` and
+starts `v2-18cb0bd7` at the promotion:
+
+![Traffic, errors and latency across the promotion](img/v2_promotion_traffic.png)
+![Decisions, Kong, live model: v1 until 12:42, then v2](img/v2_promotion_live_model.png)
+
+### Finding: `fast` measured the laptop's busy moments, not the models
+
+Steps 1 and 2 failed `fast` with v2 timed first. Repeated on the same laptop with the gate's own
+`measure()`, the two models came out:
+
+| How | Ratio v2 / v1 (each run) |
+|---|---|
+| one after the other, v2 first (as the gate did) | 1.01x, 1.00x |
+| one after the other, v1 first | 0.89x, 0.99x |
+| interleaved: each payment through both, order alternating | 1.00x, 1.00x, 0.99x |
+
+So the order wasn't the cause: each model's 500 payments take a few seconds, and a few busy
+seconds on the laptop (load average 4-9 here: display driver, browser with Grafana) fell on one
+model only. That spread (0.89-1.61x) is wider than the 1.2x the rule allows.
+
+**Fix:** `ml/eval/promotion_gate.py` `measure_pair()` times the two models together: after a
+warm-up of both, each of the same 500 payments goes through both models, alternating which goes
+first, so a busy moment slows both alike. Both callers use it (the gate's `main()`,
+`registry/promote.py`); `measure()` remains for timing one model alone (the training record).
+Tests: a busy burst gives two equally fast models the same p95 when interleaved (one after the
+other, the same burst made a false 2x), a really slower candidate (1.3x) still fails, both are
+timed on the same payments in alternating order. On the real models, 4 runs while the laptop's
+load varied: 9.97-13.88 ms in absolute terms, **0.97-1.02x** as a ratio. In steps 3 and 4: 0.99x
+and 0.96x.
+
+### Rollback on the VM (the demo's flow, rehearsed 12 Nov)
+
+After v2's promotion, `GET /v1/model` answered `previous: null`: a rollback goes back to the
+version live before *on record*, and the pinned model was never promoted on this cluster
+(`services/model-admin-svc/app/rules.py`: "fewer than two model changes are on record"). So tuned
+v1 was registered (**version 2**: `model.txt 535eb73c…`, `meta.json abd0c05b…`), promoted, and
+rolled back, with v2 live before and after:
+
+| Step | Command | Result |
+|---|---|---|
+| 1 | `make k8s-promote VERSION=2 REASON="demo: put the older model back"` | gate vs v2: better **-0.4296 FAIL**, fast 0.97x, safe 1.33%, **unseen FAIL** ("current trained on 95-140"). Not promoted |
+| 2 | the same with `OVERRIDE="demo: an older model needs a written override"` | hashes checked, signed on the laptop. Live: v1 (`535eb73c`) |
+| 3 | `make k8s-rollback REASON="v1 is worse than v2; back to v2"` | no gate. Live: **v2** (`18cb0bd7`) |
+
+The audit log (`make k8s-model-history`), newest first:
+
+| Row | Time (UTC) | Action | Version | Gate | Reason |
+|---|---|---|---|---|---|
+| 4519 | 22:41:03 | model_rolled_back | 1 (`fraud-lgbm-v2-18cb0bd7`) | none (rollback) | v1 is worse than v2; back to v2 |
+| 4518 | 22:37:51 | model_promoted | 2 (`fraud-lgbm-v1-535eb73c`) | keep: -0.4296 PR-AUC, 10.68 ms, 1.33% flagged | demo: an older model needs a written override |
+| 4164 | 20:42:26 | model_promoted | 1 (`fraud-lgbm-v2-18cb0bd7`) | keep: +0.0651 PR-AUC, 13.21 ms, 2.27% flagged | flagged share 2.27% vs 2% capacity; accepted for the demo, analysts informed |
+
+All by `admin`; afterwards `previous: "2"`.
+
+**The -0.4296 is not v1's real deficit.** The gate judges on the candidate's own test days, v1's
+92-109, and v2 was trained on 95-140, so it had seen those payments. The `unseen` check says
+exactly that: the comparison itself wasn't fair. v1 vs v2 on days neither saw (169-182, v2's
+test days) is the +0.0651 above. Both models were also timed together (0.97x, 1.00x).
+
+**For the demo** the same three commands repeat as they are: v2 is live, so promoting v1 is
+refused and overridden, and the rollback returns to v2.
+
 ## Known limit (closed in week 5)
 
 Anything that could reach Redpanda could publish to `model.events` directly, skipping the audit

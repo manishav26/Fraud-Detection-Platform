@@ -85,3 +85,73 @@ def test_promote_judges_the_candidate_on_its_own_unseen_days():
     text = (pathlib.Path(__file__).resolve().parents[1] / "registry" / "promote.py").read_text()
     assert "gate.golden_set(gate.load_data(), days)" in text and "gate.held_out_days(candidate)" in text
     assert "rows.append(gate.unseen(days, candidate, current))" in text
+
+
+# Speed: both models timed together (measure_pair), so a busy moment on the machine can't fail `fast`
+
+class FakeModel:
+    def __init__(self, ms):
+        self.ms = ms
+        self.features = ["x"]
+        self.meta = {"thresholds": {"review_threshold": 0.5}}
+
+    def predict_rows(self, rows):
+        import numpy as np
+        return np.array([r["x"] for r in rows])
+
+
+def golden_rows(n=200):
+    import pandas as pd
+    return pd.DataFrame({"x": [i / n for i in range(n)], gate.TARGET: [i % 2 for i in range(n)]})
+
+
+def busy_timer(busy_calls):
+    """Each model takes its own ms, plus 10 ms for every call made while the machine is busy
+    (calls number busy_calls[0] to busy_calls[1], counted across both models)."""
+    calls = [0]
+
+    def timer(model, _row):
+        calls[0] += 1
+        return model.ms + (10 if busy_calls[0] <= calls[0] < busy_calls[1] else 0)
+    return timer
+
+
+def test_a_busy_moment_slows_both_models_alike_when_timed_together():
+    same_speed_a, same_speed_b = FakeModel(10), FakeModel(10)
+    golden = golden_rows()
+    n = len(gate.timing_sample(golden))
+    # busy for the first 15% of the calls after warm-up: one model after the other, that is
+    # 30% of the first model's payments and none of the second's
+    start = 2 * min(gate.WARM_UP, n)
+    timer = busy_timer((start, start + int(0.3 * n)))
+    cand, curr = gate.measure_pair(same_speed_a, same_speed_b, golden, timer=timer)
+    assert cand["p95 ms"] == curr["p95 ms"] == 20
+    assert check(cand, curr)[1][1]["passed"]
+
+    # the same burst, timed one model after the other, as before 12 Nov: a false 2x slowdown
+    timer = busy_timer((0, int(0.3 * n)))
+    sequential = [float(gate.np.percentile([timer(m, None) for _ in range(n)], 95))
+                  for m in (same_speed_a, same_speed_b)]
+    assert sequential == [20, 10]
+
+
+def test_timed_together_a_really_slower_candidate_is_still_caught():
+    cand, curr = gate.measure_pair(FakeModel(13), FakeModel(10), golden_rows(), timer=busy_timer((0, 0)))
+    assert (cand["p95 ms"], curr["p95 ms"]) == (13, 10)
+    assert not check(cand, curr)[1][1]["passed"]
+
+
+def test_both_models_are_timed_on_the_same_payments_in_alternating_order():
+    seen = []
+    a, b = FakeModel(1), FakeModel(1)
+    gate.measure_pair(a, b, golden_rows(), sample=6, timer=lambda m, r: seen.append(("ab"[m is b], r["x"])) or 1)
+    timed = seen[2 * 6:]   # after the warm-up (all 6 payments, both models)
+    assert [m for m, _ in timed] == list("abbaabbaabba")
+    assert [x for _, x in timed[0::2]] == [x for _, x in timed[1::2]]
+
+
+def test_promote_and_the_gate_time_the_two_models_together():
+    root = pathlib.Path(__file__).resolve().parents[1]
+    assert "gate.measure_pair(candidate, current, golden)" in (root / "registry" / "promote.py").read_text()
+    assert "measure_pair(candidate_model, current_model, golden)" in (
+        root / "ml" / "eval" / "promotion_gate.py").read_text()
