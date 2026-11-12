@@ -24,15 +24,5 @@ spec:
             - {name: CASSANDRA_SEEDS, value: "cassandra-0.cassandra-peers.fraud.svc.cluster.local"}
           ports:
             - {name: intra-node, containerPort: 7000}
-          # Ready only when Cassandra itself serves clients, which is after it has joined the ring.
-          # The base's TCP check on 9042 is answered by the Linkerd proxy as soon as the proxy is
-          # up, so it could pass while the node is still starting, and the next node would then
-          # bootstrap at the same time.
-          readinessProbe:
-            $patch: replace
-            exec:
-              command: ["sh", "-c", "[ \"$(nodetool statusbinary)\" = running ]"]
-            initialDelaySeconds: 60
-            periodSeconds: 10
-            timeoutSeconds: 15
-            failureThreshold: 3
+          # Readiness comes from the base: ready only when Cassandra serves clients, so with
+          # OrderedReady the next node bootstraps only after this one has joined the ring

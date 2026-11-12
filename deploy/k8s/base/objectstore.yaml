@@ -28,9 +28,12 @@ spec:
             - {name: s3, containerPort: 9000}
           volumeMounts:
             - {name: data, mountPath: /data}
+          # Asked inside the pod, so it is the store answering, not the Linkerd proxy (docs/mtls.md)
           readinessProbe:
-            tcpSocket: {port: 9000}
+            exec:
+              command: ["curl", "-sf", "-o", "/dev/null", "http://localhost:9000/health"]
             periodSeconds: 5
+            timeoutSeconds: 3
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {memory: 512Mi}

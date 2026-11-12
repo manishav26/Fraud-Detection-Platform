@@ -101,6 +101,35 @@ get mTLS. Its proxy would count only Grafana's queries, not traffic between our 
 `linkerd-proxy` job leaves that one pod out (`deploy/prometheus/prometheus.k8s.yml`, tested)
 rather than open its admin port to callers without an identity.
 
+## Probes
+
+A Kubernetes TCP probe passes when something accepts the connection. In a meshed pod that is
+the Linkerd proxy, which accepts first and only then checks policy and calls the app, so a TCP
+probe tested the proxy, not the app. Once the Mesh panels had data (above), Redpanda's showed it
+plainly: its proxy refused the kubelet's probe on 29092 every few seconds (846 times in 40
+minutes, `Connection denied server.name=redpanda-29092 tls=None(PortSkipped)
+client=10.42.1.1`: the port has its own `Server`, which only our services' identities may use),
+and Redpanda stayed ready all along. Cassandra on the VM had shown the same on 11 Nov
+(`docs/cassandra.md`), fixed then only in the VM's patch.
+
+So no probe is TCP (`tests/test_k8s_manifests.py` checks the base and the built overlays):
+
+| Pod | Was | Now | What answers |
+|---|---|---|---|
+| Our services, MLflow, Grafana, Prometheus | HTTP | HTTP | the app, through its proxy; Linkerd's default policy lets probes in |
+| Postgres | inside the pod (`pg_isready`) | unchanged | Postgres |
+| Feature job | TCP 8000 | HTTP `/healthz` on 8000 | the job's own server |
+| Redpanda | TCP 29092 | inside the pod: `curl -sf localhost:9644/v1/status/ready` | Redpanda (6 ms) |
+| Cassandra | TCP 9042 (the VM: already `nodetool`) | inside the pod: `nodetool statusbinary` = `running` | Cassandra (~0.8 s; every 10 s) |
+| Object store | TCP 9000 | inside the pod: `curl -sf localhost:9000/health` | the store |
+| Kong | TCP 8000 | inside the pod: `kong health` | Kong (~0.2 s) |
+
+A probe inside the pod (`exec`) talks to the app over the pod's own loopback, which the mesh
+doesn't touch, so none of this needed a policy loosened: the kubelet still can't reach Redpanda's,
+Cassandra's or Kong's protected ports. The Mesh panel's "not mTLS" line now counts only
+connections from callers (`peer="src"`); what is left there should be the kubelet's HTTP probes
+and Kong's public port.
+
 ## Limits
 
 - **A new pod in the namespace gets an identity automatically** (the namespace's `default`
