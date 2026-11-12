@@ -18,6 +18,7 @@ Writes docs/results/e3.md and docs/figures/e3_weekly.png.
 """
 
 import argparse
+import logging
 import time
 
 import numpy as np
@@ -44,6 +45,7 @@ WEEKLY_CAP = 1            # drift strategy: at most 1 retrain per 7 days
 INITIAL_TRAIN_DAYS = (1, 73)
 SEEDS = [1, 2, 3]
 STRATEGIES = ["static", "periodic", "drift"]
+log = logging.getLogger(__name__)
 
 
 # ---------- small pure pieces (tested in tests/test_e3.py) ----------
@@ -84,6 +86,7 @@ class DriftTriggered:
         self.detector = ADWIN()
         self.retrain_days = []
         self.alarms = []              # every ADWIN alarm, used or not
+        self.refusals = []            # (day, reason) for each retrain refused while an alarm waited
         self.pending = False
 
     def observe(self, day, missed):
@@ -94,11 +97,19 @@ class DriftTriggered:
                 self.pending = True
 
     def wants_retrain(self, day, **_):
+        """The same two rules as always; a refusal is also recorded and logged with its reason
+        (ST14, threat 12: forced drift alarms must not force retrains, and say why)."""
         if not self.pending:
             return False
         if self.retrain_days and day - self.retrain_days[-1] < self.cooldown:
-            return False
-        return sum(1 for d in self.retrain_days if day - d < 7) < self.weekly_cap
+            reason = f"cooldown until day {self.retrain_days[-1] + self.cooldown}"
+        elif sum(1 for d in self.retrain_days if day - d < 7) >= self.weekly_cap:
+            reason = f"weekly cap of {self.weekly_cap} retrain(s) reached"
+        else:
+            return True
+        self.refusals.append((int(day), reason))
+        log.info("drift alarm waiting on day %d: retrain refused, %s", day, reason)
+        return False
 
     def retrained(self, day):
         self.retrain_days.append(day)

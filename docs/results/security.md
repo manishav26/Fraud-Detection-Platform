@@ -17,7 +17,7 @@ One row per test in `security/threat-model.md`. Each control needs a pass number
 | ST11 | Raw user ids in logs and stored rows | **pass** (cluster, 10 Nov): after a 500-payment replay, 0 raw or raw-shaped user ids in Cassandra's three tables, cases, the audit log, the three payment topics, the SIEM and every container's logs; every stored id is a pseudonym. Before: raw ids in all of them except the audit log, SIEM and logs | below; `make k8s-st11`; `docs/privacy.md` |
 | ST12 | Replayed and old requests | **pass** (cluster, 10 Nov): the same flagged payment twice gave one answer, 1 history row, 1 case, 1 audit row, and the second counted as a duplicate; a token issued 10 min ago got 401 with nothing in txn.raw, one from 1 min ago 200 | below; `make k8s-st12`; `docs/ingest.md` "Replays" |
 | ST13 | Label writes by the wrong service account | **pass** (cluster, 10 Nov): no login and all six other Redpanda users were refused writing `labels`; only `label-sim` could, and it was refused on `txn.raw` and `model.events` | `make k8s-kafka-check` (29 of 29); `docs/kafka.md` |
-| ST14 | Forced drift alarms | pending (week 5, with Manisha) | |
+| ST14 | Forced drift alarms | **pass, offline** (12 Nov): 5 alarms forced in one day gave 1 retrain; the other 4 were refused, each logged "cooldown until day 127"; a new alarm after the cooldown was allowed. Tested on the drift strategy's own rule (`DriftTriggered`); nothing on the cluster decides retrains yet (a live drift job is future work) | below; `make st14` |
 
 ## ST1: bad tokens (k3d cluster, 4 Nov)
 
@@ -409,3 +409,34 @@ An earlier run, stopped mid-outage, left the SIEM switched off; three rows writt
 arrived the moment it came back (the forwarder logged 503s from the mesh and kept them). The check
 now always switches the SIEM back on. On the first deploy, the 2,642 existing audit rows went out in
 6 batches within seconds.
+
+## ST14: forced drift alarms (offline, 12 Nov; `make st14`)
+
+Threat 12: an attacker who can make the drift detector fire (for example by feeding unusual
+payments) tries to force retrain after retrain, each a chance to slip bad data in. The defence is
+the drift strategy's retrain rule (Manisha's E3, `DriftTriggered` in
+`ml/experiments/e3_retraining.py`): no retrain within 7 days of the last, at most 1 a week.
+
+**How it's tested:** the rule is real; only its detector is replaced by one that alarms on every
+update, so 5 alarms arrive in one simulated day, as an attacker would force them
+(`security/tests/st14_retrain_guard.py`). It's offline because nothing on the cluster decides
+retrains yet: Manisha's drift and train jobs were planned as images and are future work; agreed
+with her on 12 Nov.
+
+**Result:**
+```
+5 drift alarms forced on day 120: 1 retrain(s) on day(s) [120], 4 refused
+  logged: drift alarm waiting on day 120: retrain refused, cooldown until day 127   (x4)
+a new alarm on day 127, after the cooldown: retrain allowed
+ST14 PASSED
+```
+
+- **Pass:** at most the allowed retrains ran (1 of 5 alarms), and every refusal is logged with its
+  reason, as the threat model asks. The same rule refuses on its weekly cap alone, with that
+  reason (`tests/test_st14.py`).
+- **The logging changed no decision:** the rule only gained the refusal record and log line
+  (agreed with Manisha); on 2,000 random retrain histories it decides exactly as before, and E3's
+  own tests pass unchanged.
+- **The test can fail:** with the guard removed, all 5 forced alarms become retrains.
+- **Limit:** a rule tested offline, not a deployed drift job; the promotion gate (ST9/threat 10)
+  still stands between any retrained model and production.
