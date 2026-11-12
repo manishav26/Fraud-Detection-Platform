@@ -52,16 +52,39 @@ the ramp test finds the VM handles, the same for every run.
 The last 43,200 rows are this test's alone: ramp and scaling use rows before 167,240. Each run's
 output: `data/consistency/<condition>-<level>-<round>/summary.md` (not in git).
 
-## Results
+## Results (VM, 11-12 Nov)
 
-*(to be filled in from the VM runs)*
+| Level | Stale reads, healthy | Stale reads, one node behind | Same ids after the repair (read at ONE) | End-to-end p95 (healthy, rounds 1 / 2) | scoring history read p95 | scoring /score p95 |
+|---|---|---|---|---|---|---|
+| **ONE** | **0 of 10,000** | **1,514 of 3,000 (50.5%)** | 0 of 3,000 | 23.9 / 25.4 ms | 5 / 8 ms | 10 / 17 ms |
+| **QUORUM** | **0 of 10,000** | **0 of 3,000** | 0 of 3,000 | 25.4 / 25.8 ms | 5 / 5 ms | 10 / 10 ms |
 
-| Level | Stale reads, healthy | Stale reads, one node behind | History read p95 | `/score` p95 | End-to-end p95 |
-|---|---|---|---|---|---|
-| ONE | | | | | |
-| QUORUM | | | | | |
+Every payment of every run was answered (5,400 per phase, all 200); the "behind" runs' payment
+p95 was 23-26 ms at both levels. Each run confirmed its setup: both scoring copies at the level
+under test; `cassandra-2` seen as down by both others within 10 s and up again within 1 s; the
+checker's reads reaching all three nodes (healthy) and `cassandra-2` (after it was back).
 
-**Limits:** all 3 Cassandra nodes share one VM, so a QUORUM read waits for a second copy over a
-local network, not between machines or zones: its latency cost here is smaller than in a real
-deployment. The "behind" node is made by switching off hinted handoff, which is what an outage
-longer than the hint window does.
+**What it shows.** With all copies up, neither level returned a stale read in 20,000 checks: the
+three copies get each write within about a millisecond, so ONE's risk is a window too short to hit
+here. With one copy behind, **ONE answered half the reads from the stale copy, and QUORUM none**:
+2 + 2 > 3, so a QUORUM read always includes a copy that has the write, and Cassandra returns the
+newest. The price on this VM is about 1 ms at p95 (within run-to-run noise; the history-read
+histogram's smallest step is 5 ms, too coarse to separate the two). Between machines or zones a
+QUORUM read waits for a second copy over a real network, so the cost there is larger. For fraud
+scoring, a stale read means a payment scored without the card's latest payments, exactly the
+history the velocity features need, so the platform keeps LOCAL_QUORUM.
+
+**Why 50% and not the predicted third.** The checker records which node *coordinated* each read
+(`stale_by_node`: `cassandra-2` 1,065 of its 1,065 reads, `cassandra-1` 449 of its 929,
+`cassandra-0` none). At ONE the coordinator asks the one copy it currently rates fastest, as far as
+we understand Cassandra's dynamic snitch, and the node that has just rejoined is the idlest, so it
+was chosen more often than one time in three; the stale data came from `cassandra-2`'s copy even
+when another node coordinated. The prediction assumed even routing; the measured 50% is the real
+exposure.
+
+**The repair works:** after `nodetool repair -full fraud`, the same 3,000 ids read at ONE were all
+current.
+
+**Limits:** all three nodes share one VM (8 vCPU); the "behind" node is made by switching off
+hinted handoff, as an outage longer than the 3-hour hint window would. The rows were the
+consistency test's own (167,240-210,439); 30 payments a second.

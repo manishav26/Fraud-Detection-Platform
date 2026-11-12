@@ -78,7 +78,7 @@ stream in time order), after the data was reloaded without tombstones. Also seen
 own time rose from 1 to 23 ms, so Kong (one copy) is close to its limit too. The HPA kept 2 scoring
 copies throughout: their average CPU never reached the 60% target.
 
-## Results (11 Nov, two senders)
+## Second run (11 Nov, two senders, the old Kong path)
 
 | Asked /s | Reached /s | p50 ms | p95 ms | p99 ms | ingest p95 ms | 5xx | degraded | scoring copies | Result |
 |---|---|---|---|---|---|---|---|---|---|
@@ -119,3 +119,38 @@ against 250 ms.
 VM's code but not the running image), so its data had about 1 tombstone per history read
 (`nodetool tablestats`: average 1.1, max 10). Cassandra's read p95 stayed at 5-23 ms, so this
 can't have changed the result much. Scoring and the feature job are rebuilt with the fix before the remaining tests.
+
+## Final run (11 Nov, two senders, the final setup)
+
+After the tombstone fix reached the images and Kong was moved to the mesh-balanced `ingest-svc`
+(`docs/results/scaling.md`, "Error cause 3"), on freshly reloaded data:
+
+| Asked /s | Reached /s | p50 ms | p95 ms | p99 ms | ingest p95 ms | 5xx | degraded | scoring copies | Result |
+|---|---|---|---|---|---|---|---|---|---|
+| 25 | 25.0 | 18 | 24 | 29 | 24 | 0.000% | 0.00% | 2 | pass |
+| 50 | 50.0 | 20 | 30 | 38 | 24 | 0.000% | 0.00% | 2 | pass |
+| 75 | 75.0 | 19 | 34 | 43 | 24 | 0.000% | 0.00% | 2 | pass |
+| 100 | 100.0 | 22 | 49 | 70 | 41 | 0.000% | 0.00% | 2 | pass |
+| 150 | 150.0 | 34 | 97 | 170 | 69 | 0.000% | 0.00% | 3 | pass |
+| 200 | 140.9 | 1,125 | 8,215 | 12,366 | 922 | 0.568% | 2.12% | 3 | not reached; targets missed |
+
+| Asked /s | End to end | Kong total | Kong itself | Kong -> ingest | ingest server | publish txn.raw | wait for scoring | scoring /score | Cassandra read | model | reasons | Cassandra write | features fresh (p95 s) | feature job / sent |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 25 | 24 | 24 | 1 | 24 | 24 | 5 | 23 | 10 | 5 | 5 | 12 | 5 | 2.7 | 1.00 |
+| 50 | 30 | 27 | 1 | 25 | 24 | 5 | 24 | 19 | 7 | 5 | 22 | 5 | 2.0 | 1.00 |
+| 75 | 34 | 32 | 2 | 27 | 24 | 5 | 24 | 18 | 6 | 5 | 22 | 5 | 1.9 | 1.00 |
+| 100 | 49 | 47 | 3 | 45 | 41 | 5 | 26 | 23 | 9 | 5 | 23 | 7 | 1.9 | 1.00 |
+| 150 | 97 | 86 | 4 | 82 | 69 | 17 | 50 | 37 | 20 | 5 | 32 | 14 | 2.5 | 1.01 |
+| 200 | 8,215 | 1,096 | 62 | 1,061 | 922 | 202 | 739 | 181 | 70 | 7 | 46 | 48 | 7.7 | 0.99 |
+
+**On the final setup every target holds up to 150 payments a second** (p95 97 ms against 250),
+five times the 30/s the targets were set for. At 200/s the 8-core VM is full: every hop slows at
+once (Kong itself 62 ms, Redpanda 202 ms, ingest 922 ms), 0.57% of payments fail and 2.1% are
+scored without history.
+
+**Open: why this run is slower than the second one**, which held 200/s. Everything slowed
+together, which points at less free CPU rather than one part: at 150/s the k3d nodes used about
+6.5 cores against 5.3 in the first run (the second run's files were overwritten). Nothing was
+left running on the VM outside the cluster. The runs differ in several ways at once (the Kong
+path, the images, what ran before, and the HPA reaching 3 scoring copies at 150/s this time), so
+the cause isn't isolated; an A/B run with only the Kong path switched would settle it.

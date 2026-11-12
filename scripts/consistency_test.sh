@@ -157,8 +157,14 @@ note "start: $CONDITION, $LEVEL, round $ROUND, $RPS/s, $MINUTES min per phase, r
 kubectl -n "$NS" patch hpa scoring-svc -p '{"spec":{"minReplicas":2,"maxReplicas":2}}'
 kubectl -n "$NS" set env deployment/scoring-svc "CASSANDRA_CONSISTENCY=$LEVEL"
 kubectl -n "$NS" rollout status deployment/scoring-svc --timeout=300s
-for pod in $(kubectl -n "$NS" get pods -l app=scoring-svc --field-selector=status.phase=Running -o name); do
-  note "$pod: CASSANDRA_CONSISTENCY=$(kubectl -n "$NS" exec "$pod" -c scoring-svc -- printenv CASSANDRA_CONSISTENCY)"
+# Rollout status returns once the new copies are ready; the old ones may still be shutting down
+# (out of the Service already, so they serve nothing). Wait for them to go, then check the new ones.
+for _ in $(seq 60); do
+  [ "$(kubectl -n "$NS" get pods -l app=scoring-svc --no-headers | wc -l | tr -d ' ')" = 2 ] && break
+  sleep 2
+done
+for pod in $(kubectl -n "$NS" get pods -l app=scoring-svc -o name); do
+  note "$pod: CASSANDRA_CONSISTENCY=$(kubectl -n "$NS" exec "$pod" -c scoring-svc -- printenv CASSANDRA_CONSISTENCY || echo '(not set)')"
 done
 
 # The checker's reads must have reached the nodes this run is about, or a "0 stale" would mean
