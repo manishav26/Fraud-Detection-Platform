@@ -290,4 +290,6 @@ echo "5/5 wait for our services (they retry until Redpanda and Cassandra answer)
 wait_for mlflow token-issuer scoring-svc ingest-svc alert-svc model-admin-svc siem-mock kong prometheus grafana
 kubectl -n "$NS" rollout status statefulset/feature-job --timeout=300s
 kubectl -n "$NS" get pods -o wide
+# Every pod meshed and ready, every node's kubelet reachable, Cassandra all up (read-only)
+"${PYTHON:-python3}" scripts/k8s_health.py
 echo "Gateway: http://localhost:8080"

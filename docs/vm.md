@@ -151,7 +151,24 @@ That kubeconfig is the cluster's admin login: keep it at mode 600 and delete it 
 - **Stop the instance when idle** (EC2 -> Instance state -> Stop). The disk keeps everything, and
   k3d's containers come back when Docker starts. Its public IP changes on every start: update
   `HostName` in `~/.ssh/config`.
-- After a start: `ssh fraud-vm`, `kubectl get nodes` (all Ready), `kubectl -n fraud get pods`.
+- After a start: `ssh fraud-vm`, then `make k8s-health` (next section).
+
+## 9a. After a stop and start
+
+Give the cluster 5-10 minutes (Cassandra's nodes rejoin one at a time), then:
+```bash
+cd ~/fraud && source .venv/bin/activate && make k8s-health
+```
+It only reads, and prints the command that fixes each problem, in the order to run them; run
+it again until it says `healthy`. Two problems seen on 12 Nov:
+- **A node's kubelet with a certificate for an old address.** Docker can give a k3d node a new
+  address when the VM starts, and that node's kubelet keeps its certificate for the old one: logs,
+  exec and port-forward to its pods fail (`x509: certificate is valid for ..., not ...`). Fix:
+  `docker restart <that node>`, one node at a time (it gets a certificate for its new address).
+- **Pods without their mesh proxy.** Pods created while Linkerd's injector was still starting
+  came up without one and, by our mesh rules, could reach nothing. The injector now fails closed
+  (`scripts/k8s_linkerd.sh`: such pods wait until it answers instead), so this should not recur;
+  the check still finds any older ones, and the fix deletes them so they're recreated with it.
 
 ## 9b. Resizing (the scaling rerun, 11 Nov)
 
@@ -161,8 +178,7 @@ stay; only the machine changes. After the rerun, resize back to m7i.2xlarge the 
 1. Stop the VM: EC2 -> Instances -> `fraud-vm` -> Instance state -> **Stop**; wait for **Stopped**.
 2. Actions -> Instance settings -> **Change instance type** -> `m7i.4xlarge` -> Apply.
 3. Instance state -> **Start**; copy the new public IPv4 into `HostName` in `~/.ssh/config`.
-4. `ssh fraud-vm`, then check everything came back: `kubectl get nodes` (4 Ready),
-   `kubectl -n fraud get pods` (all Running), and `nodetool status` (3 `UN`).
+4. `ssh fraud-vm`, then `make k8s-health` until it says `healthy` (9a).
 
 ## 10. Teardown (after the demo and the last measurement)
 
