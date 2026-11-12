@@ -130,6 +130,12 @@ Cassandra's or Kong's protected ports. The Mesh panel's "not mTLS" line now coun
 connections from callers (`peer="src"`); what is left there should be the kubelet's HTTP probes
 and Kong's public port.
 
+Applied on the VM (12 Nov): every pod ready (`make k8s-health`), Redpanda's proxy refused nothing
+more (0 in the next minutes; no refusal anywhere in the namespace over 5 minutes), and the only
+plain-text connections from callers were on each proxy's 4191 (its own `/live`, `/ready`) and
+each app's HTTP probe port (8000; Grafana 3000; MLflow 5000). 29092, 9042 and 9000 no longer
+appear: those probes run inside the pods.
+
 ## Limits
 
 - **A new pod in the namespace gets an identity automatically** (the namespace's `default`
