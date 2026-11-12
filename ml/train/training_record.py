@@ -3,7 +3,8 @@
 `make register` logs this on the model's MLflow run, so every registered version says:
   params   the LightGBM settings read from model.txt itself, the data windows and thresholds
            from meta.json
-  metrics  PR-AUC, recall @ 1% FPR, flagged share and score + reasons p95 on test days 92-109
+  metrics  PR-AUC, recall @ 1% FPR, flagged share and score + reasons p95 on the model's own
+           test days (92-109 for v1)
   tags     git commit (and whether the working copy had changes), LightGBM version, file hashes
 
 The settings come from the model file, not from ml/configs/lgbm.yaml, so they describe the
@@ -60,15 +61,15 @@ def lgbm_settings(model_file):
 
 
 def golden_metrics(folder):
-    """Model quality and speed on the golden set (test days 92-109). Loads the data: ~1-2 min."""
+    """Model quality and speed on the model's own test days. Loads the data: ~1-2 min."""
     from sklearn.metrics import roc_curve
 
-    from ml.eval.promotion_gate import golden_set, measure
+    from ml.eval.promotion_gate import golden_set, held_out_days, measure
     from ml.model import FraudModel
     from ml.train.calibrate import TARGET, load_data
 
     model = FraudModel.load(folder)
-    golden = golden_set(load_data())
+    golden = golden_set(load_data(), held_out_days(model))   # the model's own test days
     measured = measure(model, golden)
     probs = model.predict_rows(golden[model.features].to_dict("records"))
     fpr, tpr, _ = roc_curve(golden[TARGET], probs)
