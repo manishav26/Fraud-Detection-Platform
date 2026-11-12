@@ -120,9 +120,9 @@ So no probe is TCP (`tests/test_k8s_manifests.py` checks the base and the built 
 | Postgres | inside the pod (`pg_isready`) | unchanged | Postgres |
 | Feature job | TCP 8000 | HTTP `/healthz` on 8000 | the job's own server |
 | Redpanda | TCP 29092 | inside the pod: `curl -sf localhost:9644/v1/status/ready` | Redpanda (6 ms) |
-| Cassandra | TCP 9042 (the VM: already `nodetool`) | inside the pod: `nodetool statusbinary` = `running` | Cassandra (~0.8 s; every 10 s) |
+| Cassandra | TCP 9042 (the VM: already `nodetool`) | inside the pod: `nodetool statusbinary` = `running` | Cassandra (every 10 s; cost below) |
 | Object store | TCP 9000 | inside the pod: `curl -sf localhost:9000/health` | the store |
-| Kong | TCP 8000 | inside the pod: `kong health` | Kong (~0.2 s) |
+| Kong | TCP 8000 | inside the pod: `kong health` | Kong (every 5 s and 10 s; cost below) |
 
 A probe inside the pod (`exec`) talks to the app over the pod's own loopback, which the mesh
 doesn't touch, so none of this needed a policy loosened: the kubelet still can't reach Redpanda's,
@@ -135,6 +135,20 @@ more (0 in the next minutes; no refusal anywhere in the namespace over 5 minutes
 plain-text connections from callers were on each proxy's 4191 (its own `/live`, `/ready`) and
 each app's HTTP probe port (8000; Grafana 3000; MLflow 5000). 29092, 9042 and 9000 no longer
 appear: those probes run inside the pods.
+
+**What the two heavier probes cost** (12 Nov, `time` on the command inside the pod):
+
+| Probe | VM (8 cores, idle) | Laptop (busy, swapping) | Per minute on the laptop |
+|---|---|---|---|
+| Cassandra `nodetool statusbinary` (starts a JVM) | 0.8 s | 3-7 s wall, **6-11 CPU-seconds** | about **one core**, all the time, per Cassandra node |
+| Kong `kong health` | 0.2 s | 0.5-0.8 s wall, 0.5-0.7 CPU-seconds | about 0.15 core |
+
+On the laptop the Cassandra probe is a real share of the load: on 12 Nov, with Chrome and other
+apps open, the Mac swapped (6.3 GB) and pods restarted until memory was freed. Kept as is (12 Nov):
+the demo runs on the VM, where it is cheap. Cheaper probes that still ask the app itself were
+measured and work: a connect to `127.0.0.1:9042` inside the Cassandra pod (Cassandra opens it only
+once it serves clients; under 1 ms) and Kong's `GET 127.0.0.1:8100/status/ready` (8 ms of CPU,
+`200 OK`). They are the change to make if the laptop has to carry the platform again.
 
 ## Limits
 
