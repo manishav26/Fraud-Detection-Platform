@@ -1,11 +1,14 @@
 name: ci
 on: [push, pull_request]
+# Every action is pinned to the full commit of a release (the version in the comment): a tag like
+# @v4 can be moved to other code, a commit can't. The repository refuses unpinned actions
+# (since 12 Nov), and tests/test_ci.py checks every `uses:` here.
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065   # v5.6.0
         with:
           python-version: "3.11"
       - run: pip install -r requirements-dev.txt
@@ -17,7 +20,7 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
         with:
           fetch-depth: 0   # gitleaks reads every commit, not only the latest
       - name: secrets in the whole history (gitleaks)
